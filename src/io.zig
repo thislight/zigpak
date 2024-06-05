@@ -8,25 +8,49 @@ const comptimePrint = std.fmt.comptimePrint;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
+pub fn writeStringPrefix(writer: anytype, length: u32) !usize {
+    const header = try fmt.prefixString(length);
+    return try writer.write(header.toSlice());
+}
+
 pub fn writeString(writer: anytype, src: []const u8) !usize {
-    const header = try fmt.prefixString(src.len);
-    const size1 = try writer.write(header.toSlice());
+    const size1 = try writeStringPrefix(writer, @intCast(src.len));
     const size2 = try writer.write(src);
     return size1 + size2;
+}
+
+pub fn writeBinaryPrefix(writer: anytype, length: u32) !usize {
+    const header = try fmt.prefixBinary(length);
+    return try writer.write(header.toSlice());
 }
 
 pub fn writeBinary(writer: anytype, src: []const u8) !usize {
-    const header = try fmt.prefixBinary(src.len);
-    const size1 = try writer.write(header.toSlice());
+    const size1 = try writeBinaryPrefix(writer, @intCast(src.len));
     const size2 = try writer.write(src);
     return size1 + size2;
 }
 
+pub fn writeExtPrefix(writer: anytype, length: u32, extype: i8) !usize {
+    const header = try fmt.prefixExt(length, extype);
+    return try writer.write(header.toSlice());
+}
+
 pub fn writeExt(writer: anytype, extype: i8, payload: []const u8) !usize {
-    const header = try fmt.prefixExt(payload.len, extype);
-    const size1 = try writer.write(header.toSlice());
+    const size1 = try writeExtPrefix(writer, @intCast(payload.len), extype);
     const size2 = try writer.write(payload);
     return size1 + size2;
+}
+
+pub fn writeBool(writer: anytype, value: bool) !usize {
+    var buf = [_]u8{0};
+    fmt.writeBool(&buf, value);
+    return try writer.write(&buf);
+}
+
+pub fn writeNil(writer: anytype) !usize {
+    var buf = [_]u8{0};
+    fmt.writeNil(&buf);
+    return try writer.write(&buf);
 }
 
 fn BufferForNumber(comptime T: type) type {
@@ -60,6 +84,18 @@ pub fn writeFloat(writer: anytype, value: anytype) !usize {
     const bsize = fmt.writeFloat(T, &buf, value);
     const wsize = try writer.write(buf[0..bsize]);
     return wsize;
+}
+
+pub fn writeArrayPrefix(writer: anytype, length: u32) !usize {
+    const prefix = fmt.prefixArray(length);
+    const slice = prefix.toSlice();
+    return try writer.write(slice);
+}
+
+pub fn writeMapPrefix(writer: anytype, length: u32) !usize {
+    const prefix = fmt.prefixMAp(length);
+    const slice = prefix.toSlice();
+    return try writer.write(slice);
 }
 
 /// Value reader for [Reader].
