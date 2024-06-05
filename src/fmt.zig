@@ -183,7 +183,7 @@ pub const Prefix = struct {
     }
 };
 
-pub fn prefixString(len: usize) Allocator.Error!Prefix {
+pub fn prefixString(len: u32) Prefix {
     switch (len) {
         0...0b00011111 => {
             const prefix = [5]u8{ 0b10100000 | (0b00011111 & @as(u8, @intCast(len))), 0, 0, 0, 0 };
@@ -203,11 +203,10 @@ pub fn prefixString(len: usize) Allocator.Error!Prefix {
             writeIntBig(u32, prefix[1..5], @intCast(len));
             return .{ .data = prefix, .len = 5 };
         },
-        else => Allocator.Error.OutOfMemory,
     }
 }
 
-pub fn prefixBinary(len: usize) Allocator.Error!Prefix {
+pub fn prefixBinary(len: u32) Prefix {
     switch (len) {
         0...maxInt(u8) => {
             const prefix = [5]u8{ 0xc4, @as(u8, @intCast(len)), 0, 0, 0 };
@@ -223,11 +222,11 @@ pub fn prefixBinary(len: usize) Allocator.Error!Prefix {
             writeIntBig(u32, prefix[1..5], @intCast(len));
             return .{ .data = prefix, .len = 5 };
         },
-        else => Allocator.Error.OutOfMemory,
     }
 }
 
-pub fn prefixArray(len: usize) Allocator.Error!Prefix {
+/// Generate a array prefix for `len`.
+pub fn prefixArray(len: u32) Prefix {
     switch (len) {
         0...0b00001111 => {
             const prefix = [_]u8{ 0b10010000 | (0b00001111 & @as(u8, @intCast(len))), 0, 0, 0, 0, 0 };
@@ -242,11 +241,10 @@ pub fn prefixArray(len: usize) Allocator.Error!Prefix {
             writeIntBig(u32, prefix[1..5], @intCast(len));
             return .{ .data = prefix, .len = 5 };
         },
-        else => Allocator.Error.OutOfMemory,
     }
 }
 
-pub fn prefixMap(len: usize) Allocator.Error!Prefix {
+pub fn prefixMap(len: u32) Prefix {
     switch (len) {
         0...0b00001111 => {
             const prefix = [_]u8{ 0b10000000 | (0b00001111 & @as(u8, @intCast(len))), 0, 0, 0, 0, 0 };
@@ -261,11 +259,10 @@ pub fn prefixMap(len: usize) Allocator.Error!Prefix {
             writeIntBig(u32, prefix[1..5], @intCast(len));
             return .{ .data = prefix, .len = 5 };
         },
-        else => Allocator.Error.OutOfMemory,
     }
 }
 
-pub fn prefixExt(len: usize, extype: i8) Allocator.Error!Prefix {
+pub fn prefixExt(len: u32, extype: i8) Prefix {
     switch (len) {
         1, 2, 4, 8, 16 => |b| {
             const prefix = [6]u8{ 0xd4 + log2(b), asBytes(&extype)[0], 0, 0, 0, 0 };
@@ -285,7 +282,6 @@ pub fn prefixExt(len: usize, extype: i8) Allocator.Error!Prefix {
             writeIntBig(u16, prefix[1..5], @intCast(len));
             return .{ .data = prefix, .len = 6 };
         },
-        else => Allocator.Error.OutOfMemory,
     }
 }
 
