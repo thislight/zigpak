@@ -127,12 +127,12 @@ pub fn ValueReader(comptime Reader: type) type {
             self.freeLastValueAndSet();
             var buffer = try ArrayList(u8).initCapacity(self.alloc, 1);
             defer buffer.deinit();
-            var fstBuf = try buffer.addManyAsArray(1);
+            const fstBuf = try buffer.addManyAsArray(1);
             _ = try self.reader.read(fstBuf);
             while (true) {
                 switch (try fmt.readValue(buffer.items)) {
                     .Incomplete => |bsize| {
-                        var s = try buffer.addManyAsSlice(bsize);
+                        const s = try buffer.addManyAsSlice(bsize);
                         _ = try self.reader.read(s);
                     },
                     .Value => |result| {
@@ -148,11 +148,11 @@ pub fn ValueReader(comptime Reader: type) type {
             switch (value) {
                 // If it's a reference, copy to new memory
                 .String, .Binary => |bin| {
-                    var copy = try self.alloc.dupe(u8, bin);
+                    const copy = try self.alloc.dupe(u8, bin);
                     return @unionInit(fmt.Value, @tagName(value), copy);
                 },
                 .Ext => |ext| {
-                    var copy = try self.alloc.dupe(u8, ext.data);
+                    const copy = try self.alloc.dupe(u8, ext.data);
                     return @unionInit(fmt.Value, "Ext", .{
                         .data = copy,
                         .extype = ext.extype,

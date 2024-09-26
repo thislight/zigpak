@@ -2,9 +2,7 @@
 
 Messagepack implementation for Zig.
 
-Supported:
-
-- Zig 0.11
+Supported Zig 0.12 & 0.13
 
 ## Usage
 

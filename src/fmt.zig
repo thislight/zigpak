@@ -1,10 +1,11 @@
 // SPDX: Apache-2.0
 // This file is part of zigpak.
 const std = @import("std");
+const compatstd = @import("./compatstd.zig");
 const assert = std.debug.assert;
-const absCast = std.math.absCast;
-const writeIntBig = std.mem.writeIntBig;
-const readIntBig = std.mem.readIntBig;
+const absCast = compatstd.math.absCast;
+const writeIntBig = compatstd.mem.writeIntBig;
+const readIntBig = compatstd.mem.readIntBig;
 const bytesToValue = std.mem.bytesToValue;
 const bytesAsValue = std.mem.bytesAsValue;
 const asBytes = std.mem.asBytes;
@@ -24,7 +25,7 @@ fn readFloatBig(comptime T: type, src: *const [@divExact(@typeInfo(T).Float.bits
         @compileError("readFloatBig does not support float types have more than 64 bits.");
     }
 
-    if (nativeEndian == .Little) {
+    if (nativeEndian == .little) {
         var swapped: @typeInfo(@TypeOf(src)).Pointer.child = undefined;
         for (0..@divExact(src.len, 2)) |i| {
             const j = src.len - i - 1;
@@ -43,7 +44,7 @@ fn writeFloatBig(comptime T: type, dest: *[@divExact(@typeInfo(T).Float.bits, 8)
         @compileError("writeFloatBig does not support float types have more than 64 bits.");
     }
     memcpy(u8, dest, asBytes(&val));
-    if (nativeEndian == .Little) {
+    if (nativeEndian == .little) {
         for (0..@divExact(dest.len, 2)) |i| {
             std.mem.swap(u8, &dest[i], &dest[dest.len - i - 1]);
         }

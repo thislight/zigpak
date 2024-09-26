@@ -18,17 +18,21 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     _ = b.addModule("zigpak", .{
-        .source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
     });
 
     const lib = b.addStaticLibrary(.{
         .name = "zigpak",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/cmain.zig" },
+        .root_source_file = b.path("src/cmain.zig"),
         .target = target,
         .optimize = optimize,
     });
+
+    const headerPath = lib.getEmittedH();
+    const headerStep = b.addInstallHeaderFile(headerPath, "zigpak.h");
+    b.default_step.dependOn(&headerStep.step);
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
@@ -38,7 +42,7 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const fmtTests = b.addTest(.{
-        .root_source_file = .{ .path = "src/fmt.zig" },
+        .root_source_file = b.path("src/fmt.zig"),
         .target = target,
         .optimize = optimize,
     });
