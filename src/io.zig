@@ -93,7 +93,7 @@ pub fn writeArrayPrefix(writer: anytype, length: u32) !usize {
 }
 
 pub fn writeMapPrefix(writer: anytype, length: u32) !usize {
-    const prefix = fmt.prefixMAp(length);
+    const prefix = fmt.prefixMap(length);
     const slice = prefix.toSlice();
     return try writer.write(slice);
 }

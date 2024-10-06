@@ -159,7 +159,7 @@ pub fn writeNil(dst: []u8) usize {
     return 1;
 }
 
-test "writeNil" {
+test writeNil {
     const t = std.testing;
     var buf: [1]u8 = .{0};
     const size = writeNil(&buf);
