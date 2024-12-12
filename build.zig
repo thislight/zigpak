@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    _ = b.addModule("zigpak", .{
+    const core = b.addModule("zigpak", .{
         .root_source_file = b.path("src/main.zig"),
     });
 
@@ -25,14 +25,15 @@ pub fn build(b: *std.Build) void {
         .name = "zigpak",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = b.path("src/cmain.zig"),
+        .root_source_file = b.path("src/croot.zig"),
         .target = target,
         .optimize = optimize,
     });
+    lib.root_module.addImport("zigpak", core);
 
-    const headerPath = lib.getEmittedH();
-    const headerStep = b.addInstallHeaderFile(headerPath, "zigpak.h");
-    b.default_step.dependOn(&headerStep.step);
+    const headerStep = b.addInstallHeaderFile(b.path("src/zigpak.h"), "zigpak.h");
+    headerStep.step.dependOn(&lib.step);
+    b.getInstallStep().dependOn(&headerStep.step);
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
