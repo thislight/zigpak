@@ -1,11 +1,12 @@
 // SPDX: Apache-2.0
 // This file is part of zigpak.
+
 const std = @import("std");
 const compatstd = @import("./compatstd.zig");
+const readIntBig = compatstd.mem.readIntBig;
 const assert = std.debug.assert;
 const absCast = compatstd.math.absCast;
 const writeIntBig = compatstd.mem.writeIntBig;
-const readIntBig = compatstd.mem.readIntBig;
 const bytesToValue = std.mem.bytesToValue;
 const bytesAsValue = std.mem.bytesAsValue;
 const asBytes = std.mem.asBytes;
@@ -16,40 +17,8 @@ const comptimePrint = std.fmt.comptimePrint;
 const Allocator = std.mem.Allocator;
 const log2IntCeil = std.math.log2_int_ceil;
 const log2 = std.math.log2;
-const memcpy = std.mem.copyForwards;
-const nativeEndian = @import("builtin").cpu.arch.endian();
-
-fn readFloatBig(comptime T: type, src: *const [@divExact(@typeInfo(T).Float.bits, 8)]u8) T {
-    const inf = @typeInfo(T).Float;
-    if (inf.bits > 64) {
-        @compileError("readFloatBig does not support float types have more than 64 bits.");
-    }
-
-    if (nativeEndian == .little) {
-        var swapped: @typeInfo(@TypeOf(src)).Pointer.child = undefined;
-        for (0..@divExact(src.len, 2)) |i| {
-            const j = src.len - i - 1;
-            swapped[i] = src[j];
-            swapped[j] = src[i];
-        }
-        return bytesAsValue(T, &swapped).*;
-    }
-
-    return bytesAsValue(T, src).*;
-}
-
-fn writeFloatBig(comptime T: type, dest: *[@divExact(@typeInfo(T).Float.bits, 8)]u8, val: T) void {
-    const inf = @typeInfo(T).Float;
-    if (inf.bits > 64) {
-        @compileError("writeFloatBig does not support float types have more than 64 bits.");
-    }
-    memcpy(u8, dest, asBytes(&val));
-    if (nativeEndian == .little) {
-        for (0..@divExact(dest.len, 2)) |i| {
-            std.mem.swap(u8, &dest[i], &dest[dest.len - i - 1]);
-        }
-    }
-}
+const readFloatBig = compatstd.mem.readFloatBig;
+const writeFloatBig = compatstd.mem.writeFloatBig;
 
 /// Write integer [value] as specific type [T], signed or unsigned.
 ///
@@ -286,789 +255,501 @@ pub fn prefixExt(len: u32, extype: i8) Prefix {
     }
 }
 
-pub fn ReadNextResult(comptime T: type) type {
-    return struct {
-        bsize: usize,
-        value: T,
-    };
-}
+/// The value container type.
+///
+/// Every represented value is stored in a container.
+/// The first byte of every container indicates the value type
+/// and the header type.
+///
+/// See `MappedContainerType` for parsing the type.
+///
+/// ### Fixed-header containers
+/// The fields are named with `fixed_` prefix.
+///
+/// Those container's header or even the value is fixed into the type.
+/// Use the MASK_* to separate the type and the length (value).
+/// ```
+/// const length = containerType & ~ContainerType.MASK_FIXED_STR;
+/// ```
+pub const ContainerType = enum(u8) {
+    pub const MASK_FIXED_INT_POSITIVE = 0b10000000;
+    pub const MASK_FIXED_INT_NEATIVE = 0b11100000;
+    pub const MASK_FIXED_STR = 0b11100000;
+    pub const MASK_FIXED_ARRAY = 0b11110000;
+    pub const MASK_FIXED_MAP = 0b11110000;
 
-pub const ReadError = error{
-    BadType,
+    fixed_int_positive = 0,
+    fixed_int_negative = 0b11100000,
+    fixed_str = 0b10100000,
+    fixed_array = 0b10010000,
+    fixed_map = 0b10000000,
+
+    nil = 0xc0,
+    bool_false = 0xc2,
+    bool_true = 0xc3,
+
+    // Serieses
+    bin8 = 0xc4,
+    bin16 = 0xc5,
+    bin32 = 0xc6,
+    str8 = 0xd9,
+    str16 = 0xda,
+    str32 = 0xdb,
+    array16 = 0xdc,
+    array32 = 0xdd,
+    map16 = 0xde,
+    map32 = 0xdf,
+    // Extended Serieses
+    ext8 = 0xc7,
+    ext16 = 0xc8,
+    ext32 = 0xc9,
+
+    // Primitives
+    float32 = 0xca,
+    float64 = 0xcb,
+    uint8 = 0xcc,
+    uint16 = 0xcd,
+    uint32 = 0xce,
+    uint64 = 0xcf,
+    int8 = 0xd0,
+    int16 = 0xd1,
+    int32 = 0xd2,
+    int64 = 0xd3,
+    // Extended Primitives
+    // They are different from fixed_ types,
+    // so the "fixed" is moved to the suffix.
+    ext_fixed1 = 0xd4,
+    ext_fixed2 = 0xd5,
+    ext_fixed4 = 0xd6,
+    ext_fixed8 = 0xd7,
+    ext_fixed16 = 0xd8,
 };
 
-const ReadNextError = ReadError || Allocator.Error;
+pub const HeaderType = union(enum) {
+    nil,
+    bool: bool,
+    bin: u2,
+    fixstr: u8,
+    str: u2,
+    fixext: u3,
+    ext: u3,
+    fixint: i7,
+    uint: u2,
+    int: u2,
+    float: u1,
+    fixarray: u8,
+    array: u1,
+    fixmap: u8,
+    map: u1,
 
-/// Read the next value as type [T] from [src].
-///
-/// This function assume the start of [src] has a complete value to be read,
-/// and the length of [src] is not verified before reading.
-///
-/// Errors
-/// - [ReadNextError.BadType]: the type of the value could not be regconised as T.
-/// - [ReadNextError.OutOfMemory]: the specific type could not store the value.
-fn readNext(comptime T: type, src: []const u8) ReadNextError!ReadNextResult(T) {
-    const vType = src[0];
-    const inf = @typeInfo(T);
-    switch (inf) {
-        .Int => |i| {
-            if (vType & 0b10000000 == 0) {
-                // positive fixed int
-                const v = vType & 0b01111111;
-                return .{
-                    .bsize = 1,
-                    .value = v,
-                };
-            }
-            if (vType & 0b11100000 == 0b11100000) {
-                // negative fixed int
-                if (i.signedness == .unsigned) {
-                    return ReadError.BadType;
-                }
-                const v: T = @intCast(vType & 0b00011111);
-                return .{
-                    .bsize = 1,
-                    .value = -v,
-                };
-            }
-            switch (vType) {
-                0xcc, 0xcd, 0xce, 0xcf => { // unsigned int
-                    const bsize = pow(usize, 2, vType - 0xcc);
-                    if (i.bits < (bsize * 8) or (i.signedness == .signed and i.bits == (bsize * 8))) {
-                        // to store the unsigned int, the signed int must have 1 more bit
-                        return ReadNextError.OutOfMemory;
-                    }
-                    const value: u64 = switch (bsize) {
-                        1 => src[1],
-                        2 => readIntBig(u16, src[1..3]),
-                        4 => readIntBig(u32, src[1..5]),
-                        8 => readIntBig(u64, src[1..9]),
-                        else => unreachable,
-                    };
-                    return .{
-                        .bsize = bsize + 1,
-                        .value = @intCast(value),
-                    };
-                },
-                0xd0, 0xd1, 0xd2, 0xd3 => { // signed int
-                    const bsize = pow(usize, 2, vType - 0xd0);
-                    if (i.bits < (bsize * 8)) {
-                        return ReadNextError.OutOfMemory;
-                    }
-                    const value = switch (bsize) {
-                        1 => readIntBig(i8, src[1..2]),
-                        2 => readIntBig(i16, src[1..3]),
-                        4 => readIntBig(i32, src[1..5]),
-                        8 => readIntBig(i64, src[1..9]),
-                        else => unreachable,
-                    };
-                    if (i.signedness == .unsigned and value < 0) {
-                        return ReadError.BadType;
-                    }
-                    return .{
-                        .bsize = bsize + 1,
-                        .value = @intCast(value),
-                    };
-                },
-                else => return ReadError.BadType,
-            }
-        },
-        .Optional => |option| {
-            if (vType == 0xc0) {
-                return .{
-                    .bsize = 1,
-                    .value = null,
-                };
-            }
-            return readNext(option.child, src);
-        },
-        .Bool => {
-            const value = switch (vType) {
-                0xc2 => false,
-                0xc3 => true,
-                else => return ReadError.BadType,
-            };
-            return .{
-                .bsize = 1,
-                .value = value,
-            };
-        },
-        .Float => |float| {
-            const requiredBytes: usize = switch (vType) {
-                0xca => 4,
-                0xcb => 8,
-                else => return ReadError.BadType,
-            };
-            if (requiredBytes > @divTrunc(float.bits, 8)) {
-                return ReadNextError.OutOfMemory;
-            }
-            const value = switch (vType) {
-                0xca => readFloatBig(f32, src[1..5]),
-                0xcb => readFloatBig(f64, src[1..9]),
+    pub fn from(value: u8) ?HeaderType {
+        if (value & ContainerType.MASK_FIXED_INT_POSITIVE == @intFromEnum(ContainerType.fixed_int_positive)) {
+            return .{ .fixint = value & ~ContainerType.MASK_FIXED_INT_POSITIVE };
+        }
+        if (value & ContainerType.MASK_FIXED_INT_NEGATIVE == @intFromEnum(ContainerType.fixed_int_negative)) {
+            return .{ .fixint = -(value & ~ContainerType.MASK_FIXED_INT_NEGATIVE) };
+        }
+        if (value & ContainerType.MASK_FIXED_STR == @intFromEnum(ContainerType.fixed_str)) {
+            return .{ .fixstr = value & ~ContainerType.MASK_FIXED_STR };
+        }
+        if (value & ContainerType.MASK_FIXED_ARRAY == @intFromEnum(ContainerType.fixed_array)) {
+            return .{ .fixarray = value & ~ContainerType.MASK_FIXED_ARRAY };
+        }
+        if (value & ContainerType.MASK_FIXED_MAP == @intFromEnum(ContainerType.fixed_map)) {
+            return .{ .fixmap = value & ~ContainerType.MASK_FIXED_MAP };
+        }
+
+        return switch (value) {
+            @intFromEnum(ContainerType.nil) => .nil,
+            @intFromEnum(ContainerType.bool_false), @intFromEnum(ContainerType.bool_true) => .{
+                .bool = (value - @intFromEnum(ContainerType.bool_false)) == 1,
+            },
+            @intFromEnum(ContainerType.bin8)...@intFromEnum(ContainerType.bin32) => .{
+                .bin = (value - @intFromEnum(ContainerType.bin8) - 1),
+            },
+            @intFromEnum(ContainerType.str8)...@intFromEnum(ContainerType.str32) => .{
+                .str = (value - @intFromEnum(ContainerType.str8) - 1),
+            },
+            @intFromEnum(ContainerType.uint8)...@intFromEnum(ContainerType.uint64) => .{
+                .uint = value - @intFromEnum(ContainerType.uint8) - 1,
+            },
+            @intFromEnum(ContainerType.int8)...@intFromEnum(ContainerType.int64) => .{
+                .int = value - @intFromEnum(ContainerType.int8) - 1,
+            },
+            @intFromEnum(ContainerType.float32)...@intFromEnum(ContainerType.float64) => .{
+                .float = value - @intFromEnum(ContainerType.float32) - 1,
+            },
+            @intFromEnum(ContainerType.array16)...@intFromEnum(ContainerType.array32) => .{
+                .array = value - @intFromEnum(ContainerType.array16) - 1,
+            },
+            @intFromEnum(ContainerType.map16)...@intFromEnum(ContainerType.map32) => .{
+                .map = value - @intFromEnum(ContainerType.map16) - 1,
+            },
+            @intFromEnum(ContainerType.ext_fixed1)...@intFromEnum(ContainerType.ext_fixed16) => .{
+                .fixext = value - @intFromEnum(ContainerType.ext_fixed1) - 1,
+            },
+            @intFromEnum(ContainerType.ext8)...@intFromEnum(ContainerType.ext32) => .{
+                .ext = value - @intFromEnum(ContainerType.ext8) - 1,
+            },
+            else => null,
+        };
+    }
+
+    pub fn nextComponentSize(self: @This()) usize {
+        return switch (self) {
+            .nil, .bool, .fixint, .fixarray, .fixmap => 0,
+            .bin, .str => |n| switch (n) {
+                0 => 1,
+                1 => 2,
+                2 => 4,
                 else => unreachable,
-            };
-            return .{
-                .bsize = 1 + requiredBytes,
-                .value = @as(T, value),
-            };
-        },
-        .Struct => switch (T) {
-            Value.LazyArray => {
-                const csize = if (vType & 0b11110000 == 0b10010000) vType & 0b00001111 else switch (vType) {
-                    0xdc => readIntBig(u16, src[1 .. 1 + 2]),
-                    0xdd => readIntBig(u32, src[1 .. 1 + 4]),
-                    else => return ReadError.BadType,
-                };
-                const iter: Value.LazyArray = .{
-                    .itemNumber = csize,
-                };
-                return .{
-                    .bsize = switch (vType) {
-                        0xdc => 1 + 2,
-                        0xdd => 1 + 4,
-                        else => 1,
-                    },
-                    .value = iter,
-                };
             },
-            Value.LazyMap => {
-                const csize = if (vType & 0b11110000 == 0b10000000) vType & 0b00001111 else switch (vType) {
-                    0xde => readIntBig(u16, src[1 .. 1 + 2]),
-                    0xdf => readIntBig(u32, src[1 .. 1 + 4]),
-                    else => return ReadError.BadType,
-                };
-                const iter: Value.LazyMap = .{
-                    .itemNumber = csize,
-                };
-                return .{
-                    .bsize = switch (vType) {
-                        0xdc => 1 + 2,
-                        0xdd => 1 + 4,
-                        else => 1,
-                    },
-                    .value = iter,
-                };
+            .fixstr => |n| n,
+            .fixext => |n| 1 + n,
+            .ext => |n| 1 + (switch (n) {
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                else => unreachable,
+            }),
+            .int, .uint => |n| switch (n) {
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                3 => 8,
             },
-            Value.Ext => {
-                switch (vType) {
-                    0xd4, 0xd5, 0xd6, 0xd7, 0xd8 => {
-                        // fixed length: 1 - 16
-                        const bsize = pow(usize, 2, vType - 0xd4);
-                        const extype = readIntBig(i8, src[1..2]);
-                        const data = src[2 .. 2 + bsize];
-                        return .{ .bsize = 2 + bsize, .value = .{
-                            .extype = extype,
-                            .data = data,
-                        } };
-                    },
-                    0xc7, 0xc8, 0xc9 => {
-                        // variable length: 8 bits - 32 bits length
-                        const bsizeLen = pow(usize, 2, vType - 0xc7);
-                        const bsizeData = src[1 .. 1 + bsizeLen];
-                        const bsize: usize = @intCast(switch (bsizeLen) {
-                            1 => readIntBig(u8, bsizeData[0..1]),
-                            2 => readIntBig(u16, bsizeData[0..2]),
-                            4 => readIntBig(u32, bsizeData[0..4]),
-                            else => unreachable,
-                        });
-                        const extype = readIntBig(i8, src[1 + bsizeLen ..][0..1]);
-                        const data = src[2 + bsizeLen .. 2 + bsizeLen + bsize];
-                        return .{ .bsize = 2 + bsizeLen + bsize, .value = .{
-                            .extype = extype,
-                            .data = data,
-                        } };
-                    },
+            .float => |n| switch (n) {
+                0 => 4,
+                1 => 8,
+            },
+            .array, .map => |n| switch (n) {
+                0 => 2,
+                1 => 4,
+            },
+        };
+    }
+
+    pub fn family(self: HeaderType) ValueTypeFamily {
+        return switch (self) {
+            .nil => .nil,
+            .bool => .bool,
+            .fixint, .int => .int,
+            .uint => .uint,
+            .fixstr, .str => .str,
+            .bin => .bin,
+            .float => .float,
+            .ext, .fixext => .ext,
+            .array => .array,
+            .map => .map,
+        };
+    }
+};
+
+pub const Header = struct {
+    type: HeaderType,
+    ext: i8 = 0,
+    /// Body size. For primitives, it's the byte size of the value body.
+    /// For array and map, it's the item number of array or map.
+    size: u32 = 0,
+
+    pub fn from(typ: HeaderType, rest: []const u8) struct { Header, usize } {
+        return switch (typ) {
+            .nil, .bool, .fixint => .{
+                .{ .type = typ },
+                0,
+            },
+            .bin, .str => readBin: {
+                const lensize = typ.nextComponentSize();
+                const len = switch (lensize) {
+                    1 => readIntBig(u8, rest[0..1]),
+                    2 => readIntBig(u8, rest[0..2]),
+                    4 => readIntBig(u8, rest[0..4]),
                     else => unreachable,
-                }
+                };
+                break :readBin .{
+                    .{ .type = typ, .size = len },
+                    lensize,
+                };
             },
-            Value => switch (try readValue(src)) {
-                .Incomplete => unreachable,
-                .Value => |ret| .{
-                    .value = ret.value,
-                    .bsize = ret.bsize,
-                },
+            .fixstr, .fixarray, .fixmap => |nitems| .{
+                .{ .type = typ, .size = nitems },
+                0,
             },
-            else => @compileError(comptimePrint("unsupported {}", .{@typeName(T)})),
-        },
-        .Pointer => |pointer| if (pointer.size == .Slice and pointer.is_const and pointer.child == u8) {
-            // raw binary or string
-            const bsizeBytes: usize = if (vType & 0b11100000 == 0b10100000) 0 else switch (vType) {
-                0xc4, 0xd9 => 1,
-                0xc5, 0xda => 2,
-                0xc6, 0xdb => 4,
-                else => unreachable,
-            };
-            const rest = src[1..];
-            const bsize: usize = @intCast(if (bsizeBytes > 0) switch (bsizeBytes) {
-                1 => readIntBig(u8, rest[0..1]),
-                2 => readIntBig(u16, rest[0..2]),
-                4 => readIntBig(u32, rest[0..4]),
-                else => unreachable,
-            } else vType & 0b00011111);
-            const value = rest[bsizeBytes .. bsizeBytes + bsize];
-            return .{
-                .bsize = 1 + bsizeBytes + bsize,
-                .value = value,
-            };
-        } else @compileError(comptimePrint("unsupported {}", .{@typeName(T)})),
-        else => @compileError(comptimePrint("unsupported {}", .{@typeName(T)})),
-    }
-}
+            .fixext => readFixExt: {
+                const size = typ.nextComponentSize() - 1;
+                const ext = readIntBig(i8, rest[0..1]);
 
-pub const ValueType = enum {
-    Int,
-    UInt,
-    Nil,
-    Bool,
-    Float,
-    String,
-    Binary,
-    Array,
-    Map,
-    Ext,
+                break :readFixExt .{
+                    .{ .type = typ, .size = size, .ext = ext },
+                    1,
+                };
+            },
+            .ext => readExt: {
+                const lensize = typ.nextComponentSize() - 1;
+                const ext = readIntBig(i8, rest[0..1]);
+                const length = switch (lensize) {
+                    1 => readIntBig(u8, rest[1..2]),
+                    2 => readIntBig(u16, rest[1..5]),
+                    4 => readIntBig(u32, rest[1..7]),
+                    else => unreachable,
+                };
+                break :readExt .{ .{ .type = typ, .size = length, .ext = ext }, lensize + 1 };
+            },
+            .uint, .int, .float => .{
+                .{ .type = typ, .size = typ.nextComponentSize() },
+                0,
+            },
+            .array, .map => |lensize| readArray: {
+                const size = switch (lensize) {
+                    0 => readIntBig(u16, rest[0..2]),
+                    1 => readIntBig(u32, rest[0..4]),
+                };
+                const hbytes = switch (lensize) {
+                    0 => 2,
+                    1 => 4,
+                };
+                break :readArray .{
+                    .{ .type = typ, .size = size },
+                    hbytes,
+                };
+            },
+        };
+    }
 };
 
-/// A msgpack value, dynamic typed.
+pub const ValueTypeFamily = enum {
+    nil,
+    bool,
+    int,
+    uint,
+    bin,
+    str,
+    float,
+    ext,
+    array,
+    map,
+};
+
+/// Unpacking state.
 ///
-/// This type costs the larger one of `2 x usize` or 64 bits.
-/// It might be 128 bits on a 64-bit platform or 64 bits on a 32-bit.
+/// ```zig
+/// const unpack: Unpack = .{.rest = data};
 ///
-/// Msgpack supports 64-bit signed or unsigned integer, so the integers is separated to
-/// `Int` and `UInt` for signed and unsigned. Please keep in mind when handling integers.
-pub const Value = union(ValueType) {
-    Int: i64,
-    UInt: u64,
-    Nil: void,
-    Bool: bool,
-    Float: f64,
-    String: []const u8,
-    Binary: []const u8,
-    Array: LazyArray,
-    Map: LazyMap,
-    Ext: Ext,
-
-    /// The iterator for the array. Use [next] or [nextOf] function to read next value.
-    ///
-    /// Example
-    ///
-    /// ````zig
-    /// var array: LazyArray;
-    /// var src: []const u8;
-    ///
-    /// while (array.nextOf(u32, src)) |item| {
-    ///     doSomething(item);
-    ///     src = src[item.bsize..];
-    /// }
-    /// ````
-    pub const LazyArray = struct {
-        itemNumber: u32,
-        nowIdx: u32 = 0,
-
-        pub fn Next(comptime T: type) type {
-            return union(enum) { Incomplete: usize, Value: struct { bsize: usize, value: T, idx: u32 } };
-        }
-
-        /// Get the next value as the specific type.
-        pub fn nextOf(self: *LazyArray, comptime T: type, src: []const u8) ReadError!?Next(T) {
-            if (!self.hasNext()) return null;
-            // FIXME: check bounds
-            const result = try readNext(T, src);
-            const oidx = self.nowIdx;
-            self.nowIdx += 1;
-            return .{ .Value = .{
-                .bsize = result.bsize,
-                .value = result.value,
-                .idx = oidx,
-            } };
-        }
-
-        pub fn next(self: *LazyArray, src: []const u8) ReadError!?Next(Value) {
-            if (!self.hasNext()) return null;
-            const result = try readValue(src);
-            switch (result) {
-                .Incomplete => |bsize| return .{ .Incomplete = bsize },
-                .Value => |v| {
-                    const oidx = self.nowIdx;
-                    self.nowIdx += 1;
-                    return .{ .Value = .{
-                        .bsize = v.bsize,
-                        .value = v.value,
-                        .idx = oidx,
-                    } };
-                },
-            }
-        }
-
-        pub fn reset(self: *LazyArray) void {
-            self.nowIdx = 0;
-        }
-
-        pub fn hasNext(self: *const LazyArray) bool {
-            return self.itemNumber > self.nowIdx;
-        }
-    };
-
-    pub const LazyMap = struct {
-        itemNumber: u32,
-        nowIdx: u32 = 0,
-
-        pub fn Next(comptime K: type, comptime V: type) type {
-            return union(enum) { Incomplete: usize, Value: struct {
-                bsize: usize,
-                key: K,
-                value: V,
-                idx: u32,
-            } };
-        }
-
-        pub fn nextOf(self: *LazyMap, comptime K: type, comptime V: type, src: []const u8) !?Next(K, V) {
-            if (!self.hasNext()) return null;
-            const kNeedBytes = try boundCheck(src);
-            if (kNeedBytes > 0) {
-                return .{ .Incomplete = kNeedBytes };
-            }
-            const key = try readNext(K, src);
-            const rest = src[key.bsize..];
-            const vNeedBytes = boundCheck(rest);
-            if (vNeedBytes > 0) {
-                return .{ .Incomplete = vNeedBytes };
-            }
-            const value = try readNext(V, rest);
-            const oidx = self.nowIdx;
-            self.nowIdx += 1;
-            return .{ .Value = .{
-                .bsize = key.bsize + value.bsize,
-                .key = key.value,
-                .value = value.value,
-                .idx = oidx,
-            } };
-        }
-
-        pub fn next(self: *LazyMap, src: []const u8) !?Next(Value, Value) {
-            if (!self.hasNext()) return null;
-            const key = switch (try readValue(src)) {
-                .Incomplete => |bsize| return .{ .Incomplete = bsize },
-                .Value => |ret| ret,
-            };
-            const value = switch (try readValue(src[key.bsize..])) {
-                .Incomplete => |bsize| return .{ .Incomplete = bsize },
-                .Value => |ret| ret,
-            };
-            const oidx = self.nowIdx;
-            self.nowIdx += 1;
-            return .{ .Value = .{
-                .bsize = key.bsize + value.bsize,
-                .key = key.value,
-                .value = value.value,
-                .idx = oidx,
-            } };
-        }
-
-        pub fn hasNext(self: *const LazyMap) bool {
-            return self.itemNumber > self.nowIdx;
-        }
-    };
-
-    pub const Ext = struct {
-        extype: i8,
-        data: []const u8,
-    };
-};
-
-pub const MsgPakType = enum {
-    Nil,
-    BoolFalse,
-    BoolTrue,
-    FixedIntNegative,
-    FixedIntPositive,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
-    Float32,
-    Float64,
-    FixedStr,
-    Str8,
-    Str16,
-    Str32,
-    Bin8,
-    Bin16,
-    Bin32,
-    FixedArray,
-    Array16,
-    Array32,
-    FixedMap,
-    Map16,
-    Map32,
-    FixedExt1,
-    FixedExt2,
-    FixedExt4,
-    FixedExt8,
-    FixedExt16,
-    Ext8,
-    Ext16,
-    Ext32,
-
-    const Self = @This();
-
-    pub fn isBool(self: Self) bool {
-        return switch (self) {
-            .BoolFalse, .BoolTrue => true,
-            else => false,
-        };
-    }
-
-    pub fn isInt(self: Self) bool {
-        return switch (self) {
-            .FixedIntPositive, .FixedIntNegative, .Int8, .Int16, .Int32, .Int64 => true,
-            else => false,
-        };
-    }
-
-    pub fn isUInt(self: Self) bool {
-        return switch (self) {
-            .FixedIntPositive, .UInt8, .UInt16, .UInt32, .UInt64 => true,
-            else => false,
-        };
-    }
-
-    pub fn isAnyInt(self: Self) bool {
-        return self.isInt() or self.isUInt();
-    }
-
-    pub fn isFloat(self: Self) bool {
-        return switch (self) {
-            .Float32, .Float64 => true,
-            else => false,
-        };
-    }
-
-    pub fn isStr(self: Self) bool {
-        return switch (self) {
-            .FixedStr, .Str8, .Str16, .Str32 => true,
-            else => false,
-        };
-    }
-
-    pub fn isBin(self: Self) bool {
-        return switch (self) {
-            .Bin8, .Bin16, .Bin32 => true,
-            else => false,
-        };
-    }
-
-    pub fn isArray(self: Self) bool {
-        return switch (self) {
-            .FixedArray, .Array16, .Array32 => true,
-            else => false,
-        };
-    }
-
-    pub fn isMap(self: Self) bool {
-        return switch (self) {
-            .FixedMap, .Map16, .Map32 => true,
-            else => false,
-        };
-    }
-
-    pub fn isExt(self: Self) bool {
-        return switch (self) {
-            .FixedExt1, .FixedExt2, .FixedExt4, .FixedExt8, .FixedExt16, .Ext8, .Ext16, .Ext32 => true,
-            else => false,
-        };
-    }
-
-    /// Convert to [ValueType].
-    ///
-    /// Fixed integers is signed as in type, but we decide to use best-matched type for the value.
-    /// Positive fixed int is regconised as unsgined int and the negative is regconised as signed.
-    pub fn toValueType(self: Self) ValueType {
-        return switch (self) {
-            .Nil => .Nil,
-            .BoolFalse, .BoolTrue => .Bool,
-            .FixedIntNegative, .Int8, .Int16, .Int32, .Int64 => .Int,
-            .FixedIntPositive, .UInt8, .UInt16, .UInt32, .UInt64 => .UInt,
-            .Float32, .Float64 => .Float,
-            .FixedStr, .Str8, .Str16, .Str32 => .String,
-            .Bin8, .Bin16, .Bin32 => .Binary,
-            .FixedArray, .Array16, .Array32 => .Array,
-            .FixedMap, .Map16, .Map32 => .Map,
-            .FixedExt1, .FixedExt2, .FixedExt4, .FixedExt8, .FixedExt16, .Ext8, .Ext16, .Ext32 => .Ext,
-        };
-    }
-};
-
-pub fn peek(i: u8) ?MsgPakType {
-    // Check fixed size types first
-    if (i & 0b10000000 == 0) {
-        return .FixedIntPositive;
-    }
-    if (i & 0b11100000 == 0b11100000) {
-        return .FixedIntNegative;
-    }
-    if (i & 0b11100000 == 0b10100000) {
-        return .FixedStr;
-    }
-    if (i & 0b11110000 == 0b10010000) {
-        return .FixedArray;
-    }
-    if (i & 0b11110000 == 0b10000000) {
-        return .FixedMap;
-    }
-    return switch (i) {
-        0xc0 => .Nil,
-        0xc2 => .BoolFalse,
-        0xc3 => .BoolTrue,
-        0xc4 => .Bin8,
-        0xc5 => .Bin16,
-        0xc6 => .Bin32,
-        0xc7 => .Ext8,
-        0xc8 => .Ext16,
-        0xc9 => .Ext32,
-        0xca => .Float32,
-        0xcb => .Float64,
-        0xcc => .UInt8,
-        0xcd => .UInt16,
-        0xce => .UInt32,
-        0xcf => .UInt64,
-        0xd0 => .Int8,
-        0xd1 => .Int16,
-        0xd2 => .Int32,
-        0xd3 => .Int64,
-        0xd4 => .FixedExt1,
-        0xd5 => .FixedExt2,
-        0xd6 => .FixedExt4,
-        0xd7 => .FixedExt8,
-        0xd8 => .FixedExt16,
-        0xd9 => .Str8,
-        0xda => .Str16,
-        0xdb => .Str32,
-        0xdc => .Array16,
-        0xdd => .Array32,
-        0xde => .Map16,
-        0xdf => .Map32,
-        else => null,
-    };
-}
-
-pub const ReadValueResult = union(enum) {
-    Incomplete: usize,
-    Value: ReadValue,
-
-    pub const ReadValue = struct {
-        value: Value,
-        bsize: usize,
-    };
-};
-
-fn readNextValue(comptime T: type, comptime vType: ValueType, src: []const u8) ReadValueResult {
-    const item = readNext(T, src) catch unreachable;
-    const value = @unionInit(Value, @tagName(vType), item.value);
-    return .{ .Value = .{
-        .value = value,
-        .bsize = item.bsize,
-    } };
-}
-
-/// Do bound checking on a possible msgpack value in [src].
+/// if (unpack.peek()) |peek| {
+///     const requiredSize = peek.nextComponentSize();
+///     if (requiredSize > unpack.rest.len) {
+///         const ndata = readMore(data);
+///         unpack.setAppend(data.len, ndata);
+///         data = ndata;
+///     }
 ///
-/// If the type could not recongonised, [ReadError.BadType] will be returned.
-fn boundCheck(src: []const u8) ReadError!usize {
-    if (src.len == 0) {
-        return 1;
-    }
-    const vtypepeek = peek(src[0]) orelse return ReadError.BadType;
-    const vtype = vtypepeek.toValueType();
-    switch (vtype) {
-        .String, .Binary, .Ext => {
-            const olsize: usize = switch (vtypepeek) {
-                .FixedStr, .FixedExt1, .FixedExt2, .FixedExt4, .FixedExt8, .FixedExt16 => 0,
-                .Bin8, .Str8, .Ext8 => 1,
-                .Bin16, .Str16, .Ext16 => 2,
-                .Bin32, .Str32, .Ext32 => 4,
-                else => unreachable,
-            };
-            const lsize = 1 + olsize;
-            if (src.len < lsize) {
-                return lsize - src.len;
-            }
-            const extTypeSize: usize = if (vtype == .Ext) 1 else 0;
-            const cBytes: usize = switch (vtypepeek) {
-                .FixedExt1 => 1,
-                .FixedExt2 => 2,
-                .FixedExt4 => 4,
-                .FixedExt8 => 8,
-                .FixedExt16 => 16,
-                .FixedStr => 0b00011111 & src[0],
-                .Ext8, .Bin8, .Str8 => src[1],
-                .Ext16, .Bin16, .Str16 => readIntBig(u16, src[1..3]),
-                .Ext32, .Bin32, .Str32 => readIntBig(u32, src[1..5]),
-                else => unreachable,
-            } + lsize + extTypeSize;
-            if (src.len < cBytes) {
-                return cBytes - src.len;
-            }
-        },
-        .Int, .UInt, .Float => {
-            const orBytes: usize = switch (vtypepeek) {
-                .FixedIntNegative, .FixedIntPositive => 0,
-                .Int8, .UInt8 => 1,
-                .Int16, .UInt16 => 2,
-                .Int32, .UInt32, .Float32 => 4,
-                .Int64, .UInt64, .Float64 => 8,
-                else => unreachable,
-            };
-            const rBytes = orBytes + 1;
-            if (src.len < rBytes) {
-                return rBytes - src.len;
-            }
-        },
-        .Array, .Map => {
-            // only check for length for array and map, since they are evaluated lazily.
-            const orBytes: usize = switch (vtypepeek) {
-                .FixedArray, .FixedMap => 0,
-                .Array16, .Map16 => 2,
-                .Array32, .Map32 => 4,
-                else => unreachable,
-            };
-            const rBytes = orBytes + 1;
-            if (src.len < rBytes) {
-                return rBytes - src.len;
-            }
-        },
-        else => {},
-    }
-    return 0;
-}
+///     const header = unpack.next(peek);
+///     if ((header.type.family() != .array
+///         or header.type.family() != .map) // streaming map or array elements
+///         and unpack.rest.len < header.size) {
+///         const ndata = readMore(data);
+///         unpack.setAppend(data.len, ndata);
+///         data = ndata;
+///     }
+/// } else {
+///     doSomething(); // No enough data to peek
+/// }
+/// ```
+///
+/// - Concurrency-safe: No
+pub const Unpack = struct {
+    rest: []const u8,
 
-pub fn readValue(src: []const u8) ReadError!ReadValueResult {
-    const bytesNeeded = try boundCheck(src);
-    if (bytesNeeded > 0) {
-        return .{ .Incomplete = bytesNeeded };
+    pub fn setAppend(self: *Unpack, olen: usize, new: []const u8) void {
+        const ofs = olen - self.rest.len;
+        self.rest = new[ofs..];
     }
-    const vtype = (peek(src[0]) orelse unreachable).toValueType();
-    return switch (vtype) {
-        .Nil => .{ .Value = .{ .value = .Nil, .bsize = 1 } },
-        .Bool => readNextValue(bool, .Bool, src),
-        .Int => readNextValue(i64, .Int, src),
-        .UInt => readNextValue(u64, .UInt, src),
-        .Float => readNextValue(f64, .Float, src),
-        .String => readNextValue([]const u8, .String, src),
-        .Binary => readNextValue([]const u8, .Binary, src),
-        .Array => readNextValue(Value.LazyArray, .Array, src),
-        .Map => readNextValue(Value.LazyMap, .Map, src),
-        .Ext => readNextValue(Value.Ext, .Ext, src),
+
+    pub const PeekError = error{
+        BufferEmpty,
+        UnregonizedType,
     };
-}
 
-test "readValue nil" {
-    const t = std.testing;
-    const data = [_]u8{0xc0};
-    const result = try readValue(&data);
-    try t.expect(result == .Value);
-    const v = result.Value;
-    try t.expect(v.value == .Nil);
-    try t.expect(v.bsize == 1);
-}
-
-test "readValue bool" {
-    const t = std.testing;
-    const values = [_]u8{ 0xc2, 0xc3 };
-    const result = try readValue(&values);
-    try t.expect(result == .Value);
-    const vF = result.Value;
-    try t.expect(vF.value == .Bool);
-    try t.expect(vF.value.Bool == false);
-
-    const result1 = try readValue(values[vF.bsize..]);
-    try t.expect(result1 == .Value);
-    const vT = result1.Value;
-    try t.expect(vT.value == .Bool);
-    try t.expect(vT.value.Bool == true);
-}
-
-test "readValue array length fixed" {
-    const t = std.testing;
-    const values = [_]u8{ 0b10010000 | (0b00001111 & 2), 0xc0, 0xc0 };
-    const result = try readValue(&values);
-    try t.expect(result == .Value);
-    const v = result.Value;
-    try t.expect(v.bsize == 1); // length is fixed into the type
-    try t.expect(v.value == .Array);
-    var iter = v.value.Array;
-
-    var i: usize = 0;
-    var offset = v.bsize;
-    while (try iter.next(values[offset..])) |item| {
-        i += 1;
-        try t.expect(item == .Value);
-        const itemValue = item.Value.value;
-        try t.expect(itemValue == .Nil);
-        offset += item.Value.bsize;
-    }
-    try t.expectEqual(@as(usize, 2), i);
-}
-
-test "readValue array variable length 16 bits" {
-    const t = std.testing;
-    const part0 = [_]u8{ 0xdc, 0 };
-    var values = [_]u8{ 0xdc, 0, 0, 0xc0, 0xc0 };
-    writeIntBig(u16, values[1..3], 2);
-    {
-        const result = try readValue(&part0);
-        try t.expect(result == .Incomplete);
-        try t.expectEqual(@as(usize, 1), result.Incomplete);
-    }
-    {
-        const result = try readValue(&values);
-        try t.expect(result == .Value);
-        const read = result.Value;
-        try t.expectEqual(@as(usize, 3), read.bsize);
-        try t.expect(read.value == .Array);
-        var iter = read.value.Array;
-        var i: usize = 0;
-        var offset = read.bsize;
-        while (try iter.next(values[offset..])) |item| {
-            i += 1;
-            try t.expect(item == .Value);
-            const value = item.Value.value;
-            try t.expect(value == .Nil);
-            offset += item.Value.bsize;
+    pub fn peek(self: *const Unpack) PeekError!HeaderType {
+        if (self.rest.len == 0) {
+            return PeekError.BufferEmpty;
         }
-        try t.expectEqual(@as(usize, 2), i);
-    }
-}
 
-test "readValue array variable length 32 bits" {
-    const t = std.testing;
-    const part0 = [_]u8{ 0xdd, 0, 0, 0 };
-    var values = [_]u8{ 0xdd, 0, 0, 0, 0, 0xc0, 0xc0 };
-    writeIntBig(u32, values[1..5], 2);
-    {
-        const result = try readValue(&part0);
-        try t.expect(result == .Incomplete);
-        try t.expectEqual(@as(usize, 1), result.Incomplete);
+        return HeaderType.from(self.rest[0]) orelse PeekError.UnregonizedType;
     }
-    {
-        const result = try readValue(&values);
-        try t.expect(result == .Value);
-        const read = result.Value;
-        try t.expectEqual(@as(usize, 5), read.bsize);
-        try t.expect(read.value == .Array);
-        var iter = read.value.Array;
-        var i: usize = 0;
-        var offset = read.bsize;
-        while (try iter.next(values[offset..])) |item| {
-            i += 1;
-            try t.expect(item == .Value);
-            const value = item.Value.value;
-            try t.expect(value == .Nil);
-            offset += item.Value.bsize;
+
+    /// Consumes the current value header.
+    ///
+    /// You can use the result `Header.size` to confirm the
+    /// buffer can have further read.
+    /// Note: for array or map, the size is the number of items.
+    /// You can ignore it for streaming or still use it to prepare data,
+    /// this is also the number of bytes of container types.
+    ///
+    /// Calling this function, you must confirm the buffer has enough data to
+    /// read. Use `HeaderType.nextComponentSize()` to get the expected size for
+    /// the value header.
+    pub fn next(self: *Unpack, headerType: HeaderType) Header {
+        const header, const consumes = Header.from(headerType, self.rest[1..]);
+        self.rest = self.rest[1 + consumes];
+        return header;
+    }
+
+    pub const ConvertError = error{InvalidValue};
+
+    /// Consumes the current value as the null.
+    ///
+    /// Note that the result must be peer resolved to a type
+    /// with valid representation, like `?*opaque {}`.
+    pub fn nil(_: *Unpack, header: Header) ConvertError!@TypeOf(null) {
+        if (header.type == .nil) {
+            return null;
         }
-        try t.expectEqual(@as(usize, 2), i);
+        return ConvertError.InvalidValue;
     }
-}
+
+    pub fn @"bool"(_: *Unpack, header: Header) ConvertError!bool {
+        return switch (header.type) {
+            .bool => |v| v,
+            else => ConvertError.InvalidValue,
+        };
+    }
+
+    inline fn rawUInt(self: *Unpack, header: Header) ConvertError!u64 {
+        switch (header.size) {
+            1 => readIntBig(u8, self.rest[0..1]),
+            2 => readIntBig(u16, self.rest[0..2]),
+            4 => readIntBig(u32, self.rest[0..4]),
+            8 => readIntBig(u64, self.rest[0..8]),
+            else => unreachable,
+        }
+        self.rest = self.rest[8..];
+    }
+
+    inline fn rawInt(self: *Unpack, header: Header) ConvertError!i64 {
+        switch (header.size) {
+            1 => readIntBig(i8, self.rest[0..1]),
+            2 => readIntBig(i16, self.rest[0..2]),
+            4 => readIntBig(i32, self.rest[0..4]),
+            8 => readIntBig(i64, self.rest[0..8]),
+            else => unreachable,
+        }
+        self.rest = self.rest[8..];
+    }
+
+    /// Consume the current value as (signed or unsigned) integer,
+    /// and casts to your requested type.
+    ///
+    /// Use `i67` to make sure enough space for any unsigned integer.
+    pub fn int(self: *Unpack, Int: type, header: Header) ConvertError!Int {
+        return switch (header.type) {
+            .fixint => |n| std.math.cast(Int, n) orelse ConvertError.InvalidValue,
+            .int => std.math.cast(Int, try self.rawInt(header)) orelse ConvertError.InvalidValue,
+            .uint => std.math.cast(Int, try self.rawUInt(header)) orelse ConvertError.InvalidValue,
+            .float => std.math.cast(Int, try self.rawFloat(header)) orelse ConvertError.InvalidValue,
+            else => ConvertError.InvalidValue,
+        };
+    }
+
+    /// Consume the current value as the raw, as long as they
+    /// have the size.
+    pub fn raw(self: *Unpack, header: Header) []const u8 {
+        const result = self.rest[0..header.size];
+        self.rest = self.rest[header.size..];
+        return result;
+    }
+
+    inline fn rawFloat(self: *Unpack, header: Header) ConvertError!f64 {
+        if (header.type != .float) {
+            return ConvertError.InvalidValue;
+        }
+        const value: f64 = switch (header.size) {
+            4 => compatstd.mem.readFloatBig(f32, self.rest[0..4]),
+            8 => compatstd.mem.readFloatBig(f64, self.rest[0..8]),
+            else => unreachable,
+        };
+        self.rest = self.rest[header.size..];
+        return value;
+    }
+
+    /// Consume the current value as float.
+    pub fn float(self: *Unpack, Float: type, header: Header) ConvertError!Float {
+        return switch (header.type) {
+            .float => std.math.cast(Float, try self.rawFloat(header)) orelse ConvertError.InvalidValue,
+            .fixint => |n| std.math.cast(Float, n) orelse ConvertError.InvalidValue,
+            .int => std.math.cast(Float, self.rawInt(header)) orelse ConvertError.InvalidValue,
+            .uint => std.math.cast(Float, self.rawUInt(header)) orelse ConvertError.InvalidValue,
+            else => ConvertError.InvalidValue,
+        };
+    }
+
+    pub fn array(self: *Unpack, header: Header) ConvertError!UnpackArray {
+        if (header.type != .array) {
+            return ConvertError.InvalidValue;
+        }
+
+        return UnpackArray{
+            .unpack = self,
+            .len = header.size,
+        };
+    }
+
+    pub fn map(self: *Unpack, header: Header) ConvertError!UnpackMap {
+        if (header.type != .map) {
+            return ConvertError.InvalidValue;
+        }
+
+        return UnpackMap{
+            .unpack = self,
+            .len = header.size,
+        };
+    }
+};
+
+pub const UnpackArray = struct {
+    unpack: *Unpack,
+    current: u32 = 0,
+    len: u32,
+
+    pub const PeekError = Unpack.PeekError;
+
+    pub fn peek(self: UnpackArray) PeekError!?HeaderType {
+        if (self.current >= self.len) {
+            return null;
+        }
+
+        return self.unpack.peek() orelse PeekError.BufferEmpty;
+    }
+
+    pub fn next(self: *UnpackArray, headerType: HeaderType) Header {
+        const value = self.unpack.next(headerType);
+        self.current += 1;
+        return value;
+    }
+};
+
+pub const UnpackMap = struct {
+    unpack: *UnpackMap,
+    current: u32 = 0,
+    len: u32,
+    is_value: bool = false,
+
+    pub const PeekError = Unpack.PeekError;
+
+    pub fn peek(self: UnpackMap) PeekError!?HeaderType {
+        if (self.current >= self.len) {
+            return null;
+        }
+
+        return self.unpack.peek() orelse PeekError.BufferEmpty;
+    }
+
+    pub fn next(self: *UnpackMap, headerType: HeaderType) Header {
+        const value = self.unpack.next(headerType);
+        if (self.is_value) {
+            self.current += 1;
+        }
+        self.is_value = !self.is_value;
+        return value;
+    }
+};
