@@ -567,7 +567,7 @@ pub const Unpack = struct {
 
     pub const PeekError = error{
         BufferEmpty,
-        UnregonizedType,
+        UnregconizedType,
     };
 
     pub fn peek(self: *const Unpack) PeekError!HeaderType {
@@ -575,7 +575,7 @@ pub const Unpack = struct {
             return PeekError.BufferEmpty;
         }
 
-        return HeaderType.from(self.rest[0]) orelse PeekError.UnregonizedType;
+        return HeaderType.from(self.rest[0]) orelse PeekError.UnregconizedType;
     }
 
     /// Consumes the current value header.
