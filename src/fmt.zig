@@ -20,13 +20,13 @@ const log2 = std.math.log2;
 const readFloatBig = compatstd.mem.readFloatBig;
 const writeFloatBig = compatstd.mem.writeFloatBig;
 
-/// Write integer [value] as specific type [T], signed or unsigned.
+/// Write integer `value` as specific type `T`, signed or unsigned.
 ///
-/// This function uses type information from [T] to regconise the type in msgpack.
-/// If the type is [i64], the [value] is stored as a 64-bit signed integer; if the type is [u24],
+/// This function uses type information from `T` to recognise the type in msgpack.
+/// If the type is `i64`, the `value` is stored as a 64-bit signed integer; if the type is `u24`,
 /// a 32-bit unsigned is used.
 ///
-/// If you need to use the smallest type depends on the [value], see [writeIntSm].
+/// If you need to use the smallest type depends on the `value`, see `writeIntSm`.
 pub fn writeInt(comptime T: type, dst: []u8, value: T) usize {
     const inf = @typeInfo(T);
     const signed = switch (inf) {
@@ -77,7 +77,10 @@ pub fn writeInt(comptime T: type, dst: []u8, value: T) usize {
     return 1 + roundedBytes;
 }
 
-/// Write the integer [value] use the smallest type.
+/// Write the integer `value` with the smallest type.
+///
+/// This function checks in runtime to use smallest messagepack type to
+/// store the value.
 pub fn writeIntSm(comptime T: type, dst: []u8, value: T) usize {
     if (value < 0) {
         return switch (value) {
@@ -100,6 +103,11 @@ pub fn writeIntSm(comptime T: type, dst: []u8, value: T) usize {
     }
 }
 
+/// Write the float `value` as specific type `T`.
+///
+/// This function uses `T` to recognise the type for messagepack.
+/// For example: If `T` is `f64`, the value is stored as 64-bit float;
+/// if `T` is `f16`, the value is stored as 32-bit float.
 pub fn writeFloat(comptime T: type, dst: []u8, value: T) usize {
     const inf = @typeInfo(T);
     const roundedBytes = switch (inf) {
@@ -123,6 +131,7 @@ pub fn writeFloat(comptime T: type, dst: []u8, value: T) usize {
     return 1 + roundedBytes;
 }
 
+/// Write nil into the `dst`.
 pub fn writeNil(dst: []u8) usize {
     dst[0] = 0xc0;
     return 1;
@@ -136,6 +145,7 @@ test writeNil {
     try t.expectEqual(@as(u8, 0xc0), buf[0]);
 }
 
+/// Write bool into the `dst`
 pub fn writeBool(dst: []u8, value: bool) usize {
     dst[0] = switch (value) {
         true => 0xc3,
@@ -144,115 +154,121 @@ pub fn writeBool(dst: []u8, value: bool) usize {
     return 1;
 }
 
-pub const Prefix = struct {
-    data: [6]u8,
-    len: usize,
+/// The prefix for a value.
+///
+/// This is the header to be stored before the actual value.
+pub const Prefix = std.BoundedArray(u8, 6);
 
-    pub fn toSlice(self: *const Prefix) []const u8 {
-        return self.data[0..self.len];
-    }
-};
-
-pub fn prefixString(len: u32) Prefix {
+/// Generate a string prefix.
+pub inline fn prefixString(len: u32) Prefix {
+    var result: Prefix = .{};
     switch (len) {
         0...0b00011111 => {
-            const prefix = [5]u8{ 0b10100000 | (0b00011111 & @as(u8, @intCast(len))), 0, 0, 0, 0 };
-            return .{ .data = prefix, .len = 1 };
+            result.appendAssumeCapacity(0b10100000 | (0b00011111 & @as(u8, @intCast(len))));
         },
         0b00011111 + 1...maxInt(u8) => {
-            const prefix = [5]u8{ 0xd9, @as(u8, @intCast(len)), 0, 0, 0 };
-            return .{ .data = prefix, .len = 2 };
+            result.appendAssumeCapacity(0xd9);
+            result.appendAssumeCapacity(@intCast(len));
         },
         maxInt(u8)...maxInt(u16) => {
-            var prefix = [5]u8{ 0xda, 0, 0, 0, 0 };
-            writeIntBig(u16, prefix[1..3], @intCast(len));
-            return .{ .data = prefix, .len = 3 };
+            result.appendAssumeCapacity(0xda);
+            result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
         },
         maxInt(u16)...maxInt(u32) => {
-            var prefix = [5]u8{ 0xdb, 0, 0, 0, 0 };
-            writeIntBig(u32, prefix[1..5], @intCast(len));
-            return .{ .data = prefix, .len = 5 };
+            result.appendAssumeCapacity(0xdb);
+            result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }
+    return result;
 }
 
-pub fn prefixBinary(len: u32) Prefix {
+/// Generate a binary prefix.
+pub inline fn prefixBinary(len: u32) Prefix {
+    var result: Prefix = .{};
     switch (len) {
         0...maxInt(u8) => {
-            const prefix = [5]u8{ 0xc4, @as(u8, @intCast(len)), 0, 0, 0 };
-            return .{ .data = prefix, .len = 2 };
+            result.appendAssumeCapacity(0xc4);
+            result.appendSliceAssumeCapacity(&.{ 0xc4, @as(u8, @intCast(len)) });
         },
         maxInt(u8)...maxInt(u16) => {
-            var prefix = [5]u8{ 0xc5, 0, 0, 0, 0 };
-            writeIntBig(u16, prefix[1..3], @intCast(len));
-            return .{ .data = prefix, .len = 3 };
+            result.appendAssumeCapacity(0xc5);
+            result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
         },
         maxInt(u16)...maxInt(u32) => {
-            var prefix = [5]u8{ 0xc6, 0, 0, 0, 0 };
-            writeIntBig(u32, prefix[1..5], @intCast(len));
-            return .{ .data = prefix, .len = 5 };
+            result.appendAssumeCapacity(0xc6);
+            result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }
+    return result;
 }
 
 /// Generate a array prefix for `len`.
-pub fn prefixArray(len: u32) Prefix {
+pub inline fn prefixArray(len: u32) Prefix {
+    var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            const prefix = [_]u8{ 0b10010000 | (0b00001111 & @as(u8, @intCast(len))), 0, 0, 0, 0, 0 };
-            return .{ .data = prefix, .len = 1 };
+            result.appendAssumeCapacity(0b10010000 | (0b00001111 & @as(u8, @intCast(len))));
         },
         (0b00001111 + 1)...maxInt(u16) => {
-            const prefix = [_]u8{ 0xdc, @as(u16, @intCast(len)), 0, 0, 0, 0 };
-            return .{ .data = prefix, .len = 3 };
+            result.appendAssumeCapacity(0xdc);
+            result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            var prefix = [_]u8{ 0xdd, 0, 0, 0, 0, 0 };
-            writeIntBig(u32, prefix[1..5], @intCast(len));
-            return .{ .data = prefix, .len = 5 };
+            result.appendAssumeCapacity(0xdd);
+            result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }
+    return result;
 }
 
-pub fn prefixMap(len: u32) Prefix {
+/// Generate a map prefix.
+///
+/// The `len` here is the number of the k-v pairs.
+/// The elements of the map must be placed as
+/// KEY VALUE KEY VALUE ... so on.
+pub inline fn prefixMap(len: u32) Prefix {
+    var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            const prefix = [_]u8{ 0b10000000 | (0b00001111 & @as(u8, @intCast(len))), 0, 0, 0, 0, 0 };
-            return .{ .data = prefix, .len = 1 };
+            result.appendAssumeCapacity(0b10000000 | (0b00001111 & @as(u8, @intCast(len))));
         },
         (0b00001111 + 1)...maxInt(u16) => {
-            const prefix = [_]u8{ 0xde, @as(u16, @intCast(len)), 0, 0, 0, 0 };
-            return .{ .data = prefix, .len = 3 };
+            result.appendAssumeCapacity(0xde);
+            result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            var prefix = [_]u8{ 0xdf, 0, 0, 0, 0, 0 };
-            writeIntBig(u32, prefix[1..5], @intCast(len));
-            return .{ .data = prefix, .len = 5 };
+            result.appendAssumeCapacity(0xdf);
+            result.writer().writeInt(u32, len, .big);
         },
     }
+    return result;
 }
 
-pub fn prefixExt(len: u32, extype: i8) Prefix {
+/// Generate a ext prefix.
+pub inline fn prefixExt(len: u32, extype: i8) Prefix {
+    var result: Prefix = .{};
+    const writer = result.writer();
     switch (len) {
         1, 2, 4, 8, 16 => |b| {
-            const prefix = [6]u8{ 0xd4 + log2(b), asBytes(&extype)[0], 0, 0, 0, 0 };
-            return .{ .data = prefix, .len = 2 };
+            result.appendAssumeCapacity(0xd4 + log2(b));
+            writer.writeInt(i8, extype, .big) catch unreachable;
         },
         0...maxInt(u8) => {
-            const prefix = [_]u8{ 0xc7, @intCast(len), asBytes(&extype)[0], 0, 0, 0 };
-            return .{ .data = prefix, .len = 3 };
+            result.appendSliceAssumeCapacity(&.{ 0xc7, @intCast(len) });
+            writer.writeInt(i8, extype, .big) catch unreachable;
         },
         maxInt(u8) + 1...maxInt(u16) => {
-            var prefix = [_]u8{ 0xc8, 0, 0, asBytes(&extype)[0], 0, 0, 0 };
-            writeIntBig(u16, prefix[1..3], @intCast(len));
-            return .{ .data = prefix, .len = 4 };
+            result.appendAssumeCapacity(0xc8);
+            writer.writeInt(u16, @intCast(len), .big);
+            writer.writeInt(i8, extype, .big);
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            var prefix = [_]u8{ 0xc9, 0, 0, 0, 0, asBytes(&extype)[0] };
-            writeIntBig(u16, prefix[1..5], @intCast(len));
-            return .{ .data = prefix, .len = 6 };
+            result.appendAssumeCapacity(0xc9);
+            writer.writeInt(u32, @intCast(len), .big);
+            writer.writeInt(i8, extype, .big);
         },
     }
+    return result;
 }
 
 /// The value container type.
@@ -486,7 +502,7 @@ pub const Header = struct {
             },
             .ext => readExt: {
                 const lensize = typ.nextComponentSize() - 1;
-                const ext = readIntBig(i8, rest[0..1]);
+                const ext = readIntBig(i8, rest[lensize .. lensize + 1]);
                 const length = switch (lensize) {
                     1 => readIntBig(u8, rest[1..2]),
                     2 => readIntBig(u16, rest[1..5]),
@@ -567,7 +583,7 @@ pub const Unpack = struct {
 
     pub const PeekError = error{
         BufferEmpty,
-        UnregconizedType,
+        UnrecognizedType,
     };
 
     pub fn peek(self: *const Unpack) PeekError!HeaderType {
@@ -575,7 +591,7 @@ pub const Unpack = struct {
             return PeekError.BufferEmpty;
         }
 
-        return HeaderType.from(self.rest[0]) orelse PeekError.UnregconizedType;
+        return HeaderType.from(self.rest[0]) orelse PeekError.UnrecognizedType;
     }
 
     /// Consumes the current value header.
@@ -713,6 +729,10 @@ pub const UnpackArray = struct {
 
     pub const PeekError = Unpack.PeekError;
 
+    /// Peek the next header type.
+    ///
+    /// Return `null` if the array is ended, `PeekError.BufferEmpty`
+    /// if the buffered data does not enough for peeking.
     pub fn peek(self: UnpackArray) PeekError!?HeaderType {
         if (self.current >= self.len) {
             return null;
