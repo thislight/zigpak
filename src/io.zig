@@ -98,89 +98,343 @@ pub fn writeMapPrefix(writer: anytype, length: u32) !usize {
     return try writer.write(slice);
 }
 
-/// Value reader for [Reader].
+/// Wrapper to read value from a `std.io.GenericReader`.
 ///
-/// This reader uses dynamic-sized buffer.
-/// You can try [std.heap.FixedBufferAllocator] for limiting memory usage.
+/// You need a buffer to read the values, at least 8 bytes.
+/// Bigger buffer increases the effieiency of reading. The recommended
+/// size is at least 4KB, the usual size of a OS memory page.
+/// The supplied reader may be read at any time.
 ///
-/// This reader does not buffering the input, so multiple reader can be used on one [std.io.Reader].
-pub fn ValueReader(comptime Reader: type) type {
+/// The functions are not concurrency-safe.
+pub const ValueReader = struct {
+    unpack: fmt.Unpack,
+    buffer: []u8,
+    readsize: usize = 0,
+
+    pub fn init(buffer: []u8) ValueReader {
+        std.debug.assert(buffer.len >= 8);
+        return .{
+            .unpack = .{ .result = &.{} },
+            .buffer = buffer,
+        };
+    }
+
+    /// Peek the next value's type
+    fn peek(self: *ValueReader, reader: anytype) !fmt.HeaderType {
+        return self.unpack.peek() catch |err| switch (err) {
+            .BufferEmpty => whenBufferEmpty: {
+                const readsize = try reader.read(self.buffer);
+                if (readsize == 0) {
+                    break :whenBufferEmpty error.EndOfStream;
+                }
+                const data = self.buffer[0..readsize];
+                self.unpack.setAppend(self.readsize, data);
+                self.readsize = readsize;
+                break :whenBufferEmpty self.peek(reader);
+            },
+            else => err,
+        };
+    }
+
+    fn resetUnreadToStart(self: *ValueReader) usize {
+        std.mem.copyForwards(u8, self.buffer, self.unpack.rest.len);
+        self.unpack.rest = self.buffer[0..self.unpack.rest.len];
+        self.readsize = self.unpack.rest.len;
+        return self.readsize;
+    }
+
+    /// Get the header of the next value. You can use the header to
+    /// identify the value type.
+    ///
+    /// Return `error.EndOfStream` if the stream is ended.
+    pub fn next(self: *ValueReader, reader: anytype) !fmt.Header {
+        const htyp = try self.peek(reader);
+        if (htyp.nextComponentSize() > self.unpack.rest.len) {
+            try self.readMore(reader);
+        }
+        return self.unpack.next(htyp);
+    }
+
+    fn readMore(self: *ValueReader, reader: anytype) !void {
+        const emptyOfs = self.resetUnreadToStart();
+        const restBuffer = self.buffer[emptyOfs..];
+        const readsize = try reader.read(restBuffer);
+        if (readsize == 0) {
+            return error.EndOfStream;
+        }
+        const nreadsize = self.readsize + readsize;
+        const data = self.buffer[0..nreadsize];
+        self.unpack.setAppend(self.readsize, data);
+        self.readsize = nreadsize;
+    }
+
+    pub const ConvertError = fmt.Unpack.ConvertError;
+
+    pub fn nil(self: *ValueReader, _: anytype, header: fmt.Header) !@TypeOf(null) {
+        return self.unpack.nil(header);
+    }
+
+    pub fn @"bool"(self: *ValueReader, _: anytype, header: fmt.Header) !bool {
+        return self.unpack.bool(header);
+    }
+
+    pub fn int(self: *ValueReader, reader: anytype, Int: type, header: fmt.Header) !Int {
+        while (header.size > self.unpack.rest.len) {
+            try self.readMore(reader);
+        }
+        return self.unpack.int(Int, header);
+    }
+
+    /// Create reader for the value's raw data. This function can be used on
+    /// any value that have determined byte size in the header. The arrays and
+    /// the maps could not be read use this function.
+    ///
+    /// Errors:
+    /// - `ConvertError.InvalidValue` - the value could not be
+    ///     converted to this host type
+    pub fn rawReader(self: *ValueReader, reader: anytype, header: fmt.Header) !RawReader(@TypeOf(reader)) {
+        if (header.type == .map or header.type == .array) {
+            return fmt.Unpack.ConvertError.InvalidValue;
+        }
+
+        const prefixSize = @min(self.unpack.rest.len, header.size);
+        const prefix = self.unpack.rest[0..prefixSize];
+        self.unpack.rest = self.unpack.rest[prefixSize..];
+
+        return RawReader(@TypeOf(reader)).init(prefix, reader, header.size);
+    }
+
+    /// Read the raw and dupe into a slice.
+    /// The caller owns the slice.
+    ///
+    /// Errors:
+    /// - `error.StreamTooLong`
+    /// - `ConvertError.InvalidValue` - the value could not be
+    ///     converted to this host type
+    /// - from `Allocator.Error`
+    /// - from the reader's error
+    pub fn rawDupe(
+        self: *ValueReader,
+        reader: anytype,
+        allocator: Allocator,
+        header: fmt.Header,
+        maxSize: usize,
+    ) ![]const u8 {
+        var list = std.ArrayList(u8).init(allocator);
+        errdefer list.deinit();
+
+        var r = try self.rawReader(reader, header);
+        try r.reader().readAllArrayList(&list, maxSize);
+
+        return list.toOwnedSlice();
+    }
+
+    pub fn float(self: *ValueReader, reader: anytype, Float: type, header: fmt.Header) !Float {
+        while (header.size > self.unpack.rest.len) {
+            try self.readMore(reader);
+        }
+
+        return self.unpack.float(Float, header);
+    }
+
+    pub fn array(self: *ValueReader, header: fmt.Header) !ArrayReader {
+        if (header.type == .array)
+            return ArrayReader.init(self, header.size);
+        return ConvertError.InvalidValue;
+    }
+
+    pub fn map(self: *ValueReader, header: fmt.Header) !MapReader {
+        if (header.type == .map)
+            return MapReader.init(self, header.size);
+        return ConvertError.InvalidValue;
+    }
+
+    /// Skip the current value.
+    ///
+    /// Errors:
+    /// - `error.EndOfStream` - the stream is ended
+    /// - from the reader's error
+    pub fn skip(self: *ValueReader, reader: anytype, header: fmt.Header) !void {
+        switch (header.type) {
+            .array => {
+                var r = try self.array(header);
+                _ = try r.skipAll(reader);
+            },
+            .map => {
+                var r = try self.map(header);
+                _ = try r.skipAll(reader);
+            },
+            else => {
+                var r = try self.rawReader(reader, header);
+                try r.reader().skipBytes(std.math.maxInt(u64), .{});
+            },
+        }
+    }
+};
+
+/// The reader reads a raw value.
+/// This type enables streaming the raw value from a reader.
+pub fn RawReader(Reader: type) type {
+    const LitmitedReader = std.io.LimitedReader(Reader);
+    const BufferReader = std.io.FixedBufferStream([]const u8);
+
     return struct {
-        reader: Reader,
-        alloc: Allocator,
-        currentValue: ?fmt.Value = null,
+        streamReader: LitmitedReader,
+        bufReader: BufferReader,
 
-        const Self = @This();
-
-        pub fn init(reader: Reader, alloc: Allocator) Self {
+        pub fn init(prefix: []const u8, streamReader: Reader, nbytes: u64) @This() {
             return .{
-                .reader = reader,
-                .alloc = alloc,
+                .streamReader = std.io.limitedReader(streamReader, nbytes - prefix.len),
+                .bufReader = std.io.fixedBufferStream(prefix),
             };
         }
 
-        /// Read the next value.
-        ///
-        /// The returned value is owned by this struct and
-        /// will be free'd in the next call of [next] or [deinit].
-        pub fn next(self: *Self) !fmt.Value {
-            self.freeLastValueAndSet();
-            var buffer = try ArrayList(u8).initCapacity(self.alloc, 1);
-            defer buffer.deinit();
-            const fstBuf = try buffer.addManyAsArray(1);
-            _ = try self.reader.read(fstBuf);
-            while (true) {
-                switch (try fmt.readValue(buffer.items)) {
-                    .Incomplete => |bsize| {
-                        const s = try buffer.addManyAsSlice(bsize);
-                        _ = try self.reader.read(s);
-                    },
-                    .Value => |result| {
-                        const copy = self.dupeValue(result.value);
-                        self.currentValue = copy;
-                        return copy;
-                    },
-                }
+        pub fn read(self: *@This(), dest: []u8) !usize {
+            const readsize0 = try self.bufReader.read(dest);
+            const dest1 = dest[readsize0..];
+            if (dest1 > 0) {
+                const readsize1 = try self.streamReader.read(dest1);
+                return readsize0 + readsize1;
             }
+            return readsize0;
         }
 
-        fn dupeValue(self: *const Self, value: fmt.Value) !fmt.Value {
-            switch (value) {
-                // If it's a reference, copy to new memory
-                .String, .Binary => |bin| {
-                    const copy = try self.alloc.dupe(u8, bin);
-                    return @unionInit(fmt.Value, @tagName(value), copy);
-                },
-                .Ext => |ext| {
-                    const copy = try self.alloc.dupe(u8, ext.data);
-                    return @unionInit(fmt.Value, "Ext", .{
-                        .data = copy,
-                        .extype = ext.extype,
-                    });
-                },
-                else => {
-                    return value; // it's already a value
-                },
-            }
-        }
+        pub const ReaderPtr = std.io.GenericReader(*@This(), LitmitedReader.Error | BufferReader.ReadError, read);
 
-        fn freeLastValue(self: *const Self) void {
-            if (self.currentValue) |cv| {
-                switch (cv) {
-                    .String, .Binary => |b| self.alloc.free(b),
-                    .Ext => |ext| self.alloc.free(ext.data),
-                    else => {},
-                }
-            }
-        }
-
-        fn freeLastValueAndSet(self: *Self) void {
-            self.freeLastValue();
-            self.currentValue = null;
-        }
-
-        pub fn deinit(self: *const Self) void {
-            self.freeLastValue();
+        pub fn reader(self: *@This()) ReaderPtr {
+            return ReaderPtr{ .context = self };
         }
     };
 }
+
+/// The reader reads an array.
+///
+/// Use `ArrayReader.next` to grab the header and
+/// use the `ArrayReader.reader` to read the value.
+///
+/// Example:
+///
+/// Code below adds the raw values into an array list.
+///
+/// ```zig
+/// var ar = try valueReader.array(header);
+///
+/// var list = std.ArrayList([]const u8).init(allocator);
+///
+/// while (try ar.next()) |head| {
+///     const str = try ar.reader.rawDupe(reader, allocator, head, 16384);
+///     errdefer allocator.free(str);
+///     try list.append(str);
+/// }
+/// ```
+pub const ArrayReader = struct {
+    reader: *ValueReader,
+    current: u32 = 0,
+    len: u32,
+
+    pub fn init(reader: *ValueReader, len: u32) ArrayReader {
+        return .{
+            .reader = reader,
+            .len = len,
+        };
+    }
+
+    /// Get the next element header of this array.
+    ///
+    /// Return `null` if the array is ended, `error.EndOfStream` if
+    /// the reader can no longer read.
+    ///
+    /// Errors:
+    /// - from `ValueReader.next`
+    pub fn next(self: *ArrayReader, reader: anytype) !?fmt.Header {
+        if (self.current >= self.len) {
+            return null;
+        }
+
+        const value = try self.reader.next(reader);
+        self.current += 1;
+        return value;
+    }
+
+    pub fn skipAll(self: *ArrayReader, reader: anytype) !u32 {
+        const c0 = self.current;
+
+        while (self.next(reader) catch |err| switch (err) {
+            error.EndOfStream => null,
+            else => return err,
+        }) |head| {
+            try self.reader.skip(reader, head);
+        }
+
+        return self.current - c0;
+    }
+};
+
+/// The reader reads a map.
+///
+/// This type works almost like the `ArrayReader`. You can use
+/// `MapReader.is_value` to check the current value is either
+/// key or value. Note: the result is undefined before the first
+/// call of the `MapReader.next`.
+///
+///
+/// Example:
+///
+/// Code below adds the raw key-value pairs into a hash map.
+///
+/// ```zig
+/// var mr = try valueReader.map(header);
+/// var hmap = std.StringHashMap([]const u8).init(allocator);
+///
+/// while (try mr.next(reader)) |head| {
+///     const key = try mr.reader.rawDupe(reader, allocator, head, 16384);
+///     const valueHeader = (try mr.next(reader)) orelse unreachable;
+///     const value = try mr.reader.rawDupe(reader, allocator, valueHeader, 16384);
+///     try hmap.put(key, value);
+/// }
+/// ```
+pub const MapReader = struct {
+    reader: *ValueReader,
+    current: u32 = 0,
+    len: u32,
+    /// If the current value is key or value.
+    ///
+    /// The value is undefined before the first call of the `next`.
+    is_value: bool = false,
+
+    pub fn init(reader: *ValueReader, len: u32) MapReader {
+        return .{
+            .reader = reader,
+            .len = len,
+        };
+    }
+
+    /// Get the next element header of this array.
+    ///
+    /// Return `null` if the array is ended, `error.EndOfStream` if
+    /// the reader can no longer read.
+    pub fn next(self: *MapReader, reader: anytype) !?fmt.Header {
+        if (self.current >= self.len) {
+            return null;
+        }
+
+        const value = try self.reader.next(reader);
+        if (self.is_value)
+            self.current += 1;
+        self.is_value = !self.is_value;
+        return value;
+    }
+
+    pub fn skipAll(self: *MapReader, reader: anytype) !u32 {
+        const c0 = self.current;
+
+        while (self.next(reader) catch |err| switch (err) {
+            error.EndOfStream => null,
+            else => return err,
+        }) |head| {
+            try self.reader.skip(reader, head);
+        }
+
+        return self.current - c0;
+    }
+};
