@@ -36,17 +36,8 @@ fn makeFixIntNeg(value: i6) u8 {
 ///
 /// If you need to use the smallest type depends on the `value`, see `writeIntSm`.
 pub fn writeInt(comptime T: type, dst: []u8, value: T) usize {
-    const inf = @typeInfo(T);
-    const signed = switch (inf) {
-        .Int => |i| i.signedness == .signed,
-        .ComptimeInt => value < 0,
-        else => @compileError("T must int or comptime_int"),
-    };
-    const bits = switch (inf) {
-        .Int => |i| i.bits,
-        .ComptimeInt => log2IntCeil(comptime_int, value) + (if (value < 0) 2 else 1),
-        else => unreachable,
-    };
+    const signed = compatstd.meta.signedness(value) == .signed;
+    const bits = compatstd.meta.bitsOfNumber(value);
     if (bits > 64) {
         @compileError("the max integer size is 64 bits");
     }
@@ -153,14 +144,10 @@ pub fn writeIntSm(comptime T: type, dst: []u8, value: T) usize {
 /// For example: If `T` is `f64`, the value is stored as 64-bit float;
 /// if `T` is `f16`, the value is stored as 32-bit float.
 pub fn writeFloat(comptime T: type, dst: []u8, value: T) usize {
-    const inf = @typeInfo(T);
-    const roundedBytes = switch (inf) {
-        .Float => |flt| switch (flt.bits) {
-            0...32 => 4,
-            33...64 => 8,
-            else => @compileError(comptimePrint("unsupported {}", .{@typeName(T)})),
-        },
-        else => @compileError(comptimePrint("unsuuported {}", .{@typeName(T)})),
+    const roundedBytes = switch (compatstd.meta.bitsOfType(T)) {
+        0...32 => 4,
+        33...64 => 8,
+        else => @compileError(comptimePrint("unsupported {}", .{@typeName(T)})),
     };
     dst[0] = switch (roundedBytes) {
         4 => 0xca,
@@ -168,8 +155,8 @@ pub fn writeFloat(comptime T: type, dst: []u8, value: T) usize {
         else => unreachable,
     };
     switch (roundedBytes) {
-        4 => writeFloatBig(f32, dst[1..5], value),
-        8 => writeFloatBig(f64, dst[1..9], value),
+        4 => writeFloatBig(f32, dst[1..5], @floatCast(value)),
+        8 => writeFloatBig(f64, dst[1..9], @floatCast(value)),
         else => unreachable,
     }
     return 1 + roundedBytes;
