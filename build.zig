@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     const stepCompatTest = b.step("test-compat", "Run compatibility tests");
 
     const core = b.addModule("zigpak", .{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/root.zig"),
         .optimize = optimize,
         .target = target,
     });
@@ -70,7 +70,7 @@ pub fn build(b: *std.Build) void {
 
     {
         const tests = b.addTest(.{
-            .root_source_file = b.path("src/main.zig"),
+            .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
         });

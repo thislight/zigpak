@@ -1,6 +1,6 @@
 // SPDX: Apache-2.0
 // This file is part of zigpak.
-const fmt = @import("./fmt.zig");
+const fmt = @import("./root.zig");
 const std = @import("std");
 const log2IntCeil = std.math.log2_int_ceil;
 const divCeil = std.math.divCeil;

@@ -5,7 +5,7 @@ fn rewriteValue(
     reader: anytype,
     writer: anytype,
     values: *zigpak.io.ValueReader,
-    h: zigpak.fmt.Header,
+    h: zigpak.Header,
 ) !void {
     switch (h.type.family()) {
         .nil => _ = try zigpak.io.writeNil(writer),

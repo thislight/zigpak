@@ -18,8 +18,8 @@ const zigpak_unpack = extern struct {
         };
     }
 
-    fn toUnpack(self: @This()) zigpak.fmt.Unpack {
-        return zigpak.fmt.Unpack{ .rest = self.toSlice() };
+    fn toUnpack(self: @This()) zigpak.Unpack {
+        return zigpak.Unpack{ .rest = self.toSlice() };
     }
 };
 

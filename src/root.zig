@@ -1,6 +1,12 @@
 // SPDX: Apache-2.0
 // This file is part of zigpak.
 
+pub const io = @import("./io.zig");
+
+test {
+    _ = io;
+}
+
 const std = @import("std");
 const compatstd = @import("./compatstd.zig");
 const readIntBig = compatstd.mem.readIntBig;
