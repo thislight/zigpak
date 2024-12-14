@@ -20,6 +20,14 @@ const log2 = std.math.log2;
 const readFloatBig = compatstd.mem.readFloatBig;
 const writeFloatBig = compatstd.mem.writeFloatBig;
 
+fn makeFixIntPos(value: u7) u8 {
+    return ~ContainerType.MASK_FIXED_INT_POSITIVE & value;
+}
+
+fn makeFixIntNeg(value: i6) u8 {
+    return @intFromEnum(ContainerType.fixed_int_negative) | ~ContainerType.MASK_FIXED_INT_NEGATIVE & @as(u8, @intCast(@abs(value)));
+}
+
 /// Write integer `value` as specific type `T`, signed or unsigned.
 ///
 /// This function uses type information from `T` to recognise the type in msgpack.
@@ -45,62 +53,98 @@ pub fn writeInt(comptime T: type, dst: []u8, value: T) usize {
     // TODO: reduce the generated size by move common logic to another function.
     const roundedBytes = if (signed) switch (bits) {
         0...6 => 0,
-        6...8 => 1,
-        8...16 => 2,
-        16...32 => 4,
-        32...64 => 8,
+        7...8 => 1,
+        9...16 => 2,
+        17...32 => 4,
+        33...64 => 8,
+        else => unreachable,
     } else switch (bits) {
         0...7 => 0,
-        7...8 => 1,
-        8...16 => 2,
-        16...32 => 4,
-        32...64 => 8,
+        8 => 1,
+        9...16 => 2,
+        17...32 => 4,
+        33...64 => 8,
+        else => unreachable,
     };
-    const header = if (signed and value < 0) switch (roundedBytes) {
-        0 => 0b11100000 | (0b00011111 & absCast(value)),
-        1, 2, 4, 8 => 0xd0 + (roundedBytes - 1),
+    const tier = switch (roundedBytes) {
+        0, 1 => 0,
+        2 => 1,
+        4 => 2,
+        8 => 3,
+        else => unreachable,
+    };
+    const header: u8 = if (signed) switch (roundedBytes) {
+        0 => makeFixIntNeg(@intCast(value)),
+        1, 2, 4, 8 => 0xd0 + tier,
         else => unreachable,
     } else switch (roundedBytes) {
-        0 => 0b01111111 & value,
-        1, 2, 4, 8 => 0xcc + (roundedBytes - 1),
+        0 => makeFixIntPos(@intCast(value)),
+        1, 2, 4, 8 => 0xcc + tier,
         else => unreachable,
     };
     dst[0] = header;
     if (roundedBytes == 0) {
         return 1;
     }
-    const writtenType = @Type(.{ .Int = .{
-        .signedness = if (signed) .signed else .unsigned,
-        .bits = roundedBytes * 8,
-    } });
-    writeIntBig(writtenType, dst[1..roundedBytes], @as(writtenType, value));
+    const writtenType = std.meta.Int(if (signed) .signed else .unsigned, roundedBytes * 8);
+    writeIntBig(writtenType, dst[1 .. roundedBytes + 1], @as(writtenType, value));
     return 1 + roundedBytes;
 }
 
 /// Write the integer `value` with the smallest type.
 ///
+/// The value must can be represented in 64 bits
+/// (signed or unsigned), or the behaviour is undefined.
+///
 /// This function checks in runtime to use smallest messagepack type to
 /// store the value.
 pub fn writeIntSm(comptime T: type, dst: []u8, value: T) usize {
-    if (value < 0) {
-        return switch (value) {
-            -0b00011111...-1 => writeInt(i6, dst, value),
-            minInt(i8)...-0b00100000 => writeInt(i8, dst, value),
-            minInt(i16)...minInt(i8) - 1 => writeInt(i16, dst, value),
-            minInt(i32)...minInt(i16) - 1 => writeInt(i32, dst, value),
-            minInt(i64)...minInt(i32) - 1 => writeInt(i64, dst, value),
-            else => unreachable,
-        };
+    if (value >= 0) {
+        if (value >= 0 and value <= 0b01111111) {
+            return writeInt(u7, dst, @intCast(value));
+        } else if (value <= maxInt(u8)) {
+            return writeInt(u8, dst, @intCast(value));
+        } else if (value <= maxInt(u16)) {
+            return writeInt(u16, dst, @intCast(value));
+        } else if (value <= maxInt(u32)) {
+            return writeInt(u32, dst, @intCast(value));
+        } else if (value <= maxInt(u64)) {
+            return writeInt(u64, dst, @intCast(value));
+        }
     } else {
-        return switch (value) {
-            0...0b01111111 => writeInt(u7, dst, value),
-            0b10000000...maxInt(u8) => writeInt(u8, dst, value),
-            maxInt(u8) + 1...maxInt(u16) => writeInt(u16, dst, value),
-            maxInt(u16) + 1...maxInt(u32) => writeInt(u32, dst, value),
-            maxInt(u32) + 1...maxInt(u64) => writeInt(u64, dst, value),
-            else => unreachable,
-        };
+        if (value >= -0b00011111) {
+            return writeInt(i6, dst, @intCast(value));
+        } else if (value >= minInt(i8)) {
+            return writeInt(i8, dst, @intCast(value));
+        } else if (value >= minInt(i16)) {
+            return writeInt(i16, dst, @intCast(value));
+        } else if (value >= minInt(i32)) {
+            return writeInt(i32, dst, @intCast(value));
+        } else if (value >= minInt(i64)) {
+            return writeInt(i64, dst, @intCast(value));
+        }
     }
+    unreachable;
+
+    // if (value < 0) {
+    //     return switch (value) {
+    //         -0b00011111...-1 => writeInt(i6, dst, @intCast(value)),
+    //         minInt(i8)...-0b00100000 => writeInt(i8, dst, @intCast(value)),
+    //         minInt(i16)...minInt(i8) - 1 => writeInt(i16, dst, @intCast(value)),
+    //         minInt(i32)...minInt(i16) - 1 => writeInt(i32, dst, @intCast(value)),
+    //         minInt(i64)...minInt(i32) - 1 => writeInt(i64, dst, @intCast(value)),
+    //         else => unreachable,
+    //     };
+    // } else {
+    //     return switch (value) {
+    //         0...0b01111111 => writeInt(u7, dst, @intCast(value)),
+    //         0b10000000...maxInt(u8) => writeInt(u8, dst, @intCast(value)),
+    //         maxInt(u8) + 1...maxInt(u16) => writeInt(u16, dst, @intCast(value)),
+    //         maxInt(u16) + 1...maxInt(u32) => writeInt(u32, dst, @intCast(value)),
+    //         maxInt(u32) + 1...maxInt(u64) => writeInt(u64, dst, @intCast(value)),
+    //         else => unreachable,
+    //     };
+    // }
 }
 
 /// Write the float `value` as specific type `T`.
@@ -288,11 +332,11 @@ pub inline fn prefixExt(len: u32, extype: i8) Prefix {
 /// const length = containerType & ~ContainerType.MASK_FIXED_STR;
 /// ```
 pub const ContainerType = enum(u8) {
-    pub const MASK_FIXED_INT_POSITIVE = 0b10000000;
-    pub const MASK_FIXED_INT_NEATIVE = 0b11100000;
-    pub const MASK_FIXED_STR = 0b11100000;
-    pub const MASK_FIXED_ARRAY = 0b11110000;
-    pub const MASK_FIXED_MAP = 0b11110000;
+    pub const MASK_FIXED_INT_POSITIVE: u8 = 0b10000000;
+    pub const MASK_FIXED_INT_NEGATIVE: u8 = 0b11100000;
+    pub const MASK_FIXED_STR: u8 = 0b11100000;
+    pub const MASK_FIXED_ARRAY: u8 = 0b11110000;
+    pub const MASK_FIXED_MAP: u8 = 0b11110000;
 
     fixed_int_positive = 0,
     fixed_int_negative = 0b11100000,
@@ -349,7 +393,7 @@ pub const HeaderType = union(enum) {
     str: u2,
     fixext: u3,
     ext: u3,
-    fixint: i7,
+    fixint: i8,
     uint: u2,
     int: u2,
     float: u1,
@@ -360,10 +404,10 @@ pub const HeaderType = union(enum) {
 
     pub fn from(value: u8) ?HeaderType {
         if (value & ContainerType.MASK_FIXED_INT_POSITIVE == @intFromEnum(ContainerType.fixed_int_positive)) {
-            return .{ .fixint = value & ~ContainerType.MASK_FIXED_INT_POSITIVE };
+            return .{ .fixint = @intCast(value & ~ContainerType.MASK_FIXED_INT_POSITIVE) };
         }
         if (value & ContainerType.MASK_FIXED_INT_NEGATIVE == @intFromEnum(ContainerType.fixed_int_negative)) {
-            return .{ .fixint = -(value & ~ContainerType.MASK_FIXED_INT_NEGATIVE) };
+            return .{ .fixint = -@as(i8, @intCast(value & ~ContainerType.MASK_FIXED_INT_NEGATIVE)) };
         }
         if (value & ContainerType.MASK_FIXED_STR == @intFromEnum(ContainerType.fixed_str)) {
             return .{ .fixstr = value & ~ContainerType.MASK_FIXED_STR };
@@ -381,31 +425,31 @@ pub const HeaderType = union(enum) {
                 .bool = (value - @intFromEnum(ContainerType.bool_false)) == 1,
             },
             @intFromEnum(ContainerType.bin8)...@intFromEnum(ContainerType.bin32) => .{
-                .bin = (value - @intFromEnum(ContainerType.bin8) - 1),
+                .bin = @intCast(value - @intFromEnum(ContainerType.bin8)),
             },
             @intFromEnum(ContainerType.str8)...@intFromEnum(ContainerType.str32) => .{
-                .str = (value - @intFromEnum(ContainerType.str8) - 1),
+                .str = @intCast(value - @intFromEnum(ContainerType.str8)),
             },
             @intFromEnum(ContainerType.uint8)...@intFromEnum(ContainerType.uint64) => .{
-                .uint = value - @intFromEnum(ContainerType.uint8) - 1,
+                .uint = @intCast(value - @intFromEnum(ContainerType.uint8)),
             },
             @intFromEnum(ContainerType.int8)...@intFromEnum(ContainerType.int64) => .{
-                .int = value - @intFromEnum(ContainerType.int8) - 1,
+                .int = @intCast(value - @intFromEnum(ContainerType.int8)),
             },
             @intFromEnum(ContainerType.float32)...@intFromEnum(ContainerType.float64) => .{
-                .float = value - @intFromEnum(ContainerType.float32) - 1,
+                .float = @intCast(value - @intFromEnum(ContainerType.float32)),
             },
             @intFromEnum(ContainerType.array16)...@intFromEnum(ContainerType.array32) => .{
-                .array = value - @intFromEnum(ContainerType.array16) - 1,
+                .array = @intCast(value - @intFromEnum(ContainerType.array16)),
             },
             @intFromEnum(ContainerType.map16)...@intFromEnum(ContainerType.map32) => .{
-                .map = value - @intFromEnum(ContainerType.map16) - 1,
+                .map = @intCast(value - @intFromEnum(ContainerType.map16)),
             },
             @intFromEnum(ContainerType.ext_fixed1)...@intFromEnum(ContainerType.ext_fixed16) => .{
-                .fixext = value - @intFromEnum(ContainerType.ext_fixed1) - 1,
+                .fixext = @intCast(value - @intFromEnum(ContainerType.ext_fixed1)),
             },
             @intFromEnum(ContainerType.ext8)...@intFromEnum(ContainerType.ext32) => .{
-                .ext = value - @intFromEnum(ContainerType.ext8) - 1,
+                .ext = @intCast(value - @intFromEnum(ContainerType.ext8)),
             },
             else => null,
         };
@@ -422,10 +466,10 @@ pub const HeaderType = union(enum) {
             },
             .fixstr => |n| n,
             .fixext => |n| 1 + n,
-            .ext => |n| 1 + (switch (n) {
-                0 => 1,
-                1 => 2,
-                2 => 4,
+            .ext => |n| (switch (n) {
+                0 => 1 + 1,
+                1 => 1 + 2,
+                2 => 1 + 4,
                 else => unreachable,
             }),
             .int, .uint => |n| switch (n) {
@@ -455,8 +499,8 @@ pub const HeaderType = union(enum) {
             .bin => .bin,
             .float => .float,
             .ext, .fixext => .ext,
-            .array => .array,
-            .map => .map,
+            .array, .fixarray => .array,
+            .map, .fixmap => .map,
         };
     }
 };
@@ -478,8 +522,8 @@ pub const Header = struct {
                 const lensize = typ.nextComponentSize();
                 const len = switch (lensize) {
                     1 => readIntBig(u8, rest[0..1]),
-                    2 => readIntBig(u8, rest[0..2]),
-                    4 => readIntBig(u8, rest[0..4]),
+                    2 => readIntBig(u16, rest[0..2]),
+                    4 => readIntBig(u32, rest[0..4]),
                     else => unreachable,
                 };
                 break :readBin .{
@@ -496,23 +540,23 @@ pub const Header = struct {
                 const ext = readIntBig(i8, rest[0..1]);
 
                 break :readFixExt .{
-                    .{ .type = typ, .size = size, .ext = ext },
+                    .{ .type = typ, .size = @intCast(size), .ext = ext },
                     1,
                 };
             },
             .ext => readExt: {
                 const lensize = typ.nextComponentSize() - 1;
-                const ext = readIntBig(i8, rest[lensize .. lensize + 1]);
+                const ext = readIntBig(i8, rest[lensize..][0..1]);
                 const length = switch (lensize) {
                     1 => readIntBig(u8, rest[1..2]),
-                    2 => readIntBig(u16, rest[1..5]),
-                    4 => readIntBig(u32, rest[1..7]),
+                    2 => readIntBig(u16, rest[1..3]),
+                    4 => readIntBig(u32, rest[1..5]),
                     else => unreachable,
                 };
                 break :readExt .{ .{ .type = typ, .size = length, .ext = ext }, lensize + 1 };
             },
             .uint, .int, .float => .{
-                .{ .type = typ, .size = typ.nextComponentSize() },
+                .{ .type = typ, .size = @intCast(typ.nextComponentSize()) },
                 0,
             },
             .array, .map => |lensize| readArray: {
@@ -520,7 +564,7 @@ pub const Header = struct {
                     0 => readIntBig(u16, rest[0..2]),
                     1 => readIntBig(u32, rest[0..4]),
                 };
-                const hbytes = switch (lensize) {
+                const hbytes: usize = switch (lensize) {
                     0 => 2,
                     1 => 4,
                 };
@@ -576,6 +620,10 @@ pub const ValueTypeFamily = enum {
 pub const Unpack = struct {
     rest: []const u8,
 
+    pub fn init(data: []const u8) Unpack {
+        return .{ .rest = data };
+    }
+
     pub fn setAppend(self: *Unpack, olen: usize, new: []const u8) void {
         const ofs = olen - self.rest.len;
         self.rest = new[ofs..];
@@ -607,7 +655,12 @@ pub const Unpack = struct {
     /// the value header.
     pub fn next(self: *Unpack, headerType: HeaderType) Header {
         const header, const consumes = Header.from(headerType, self.rest[1..]);
-        self.rest = self.rest[1 + consumes];
+        self.rest = self.rest[1 + consumes ..];
+        // std.debug.print("Unpack.next headerType = {}, comsumes = {}, header = {}\n", .{
+        //     headerType,
+        //     consumes,
+        //     header,
+        // });
         return header;
     }
 
@@ -632,37 +685,45 @@ pub const Unpack = struct {
     }
 
     inline fn rawUInt(self: *Unpack, header: Header) ConvertError!u64 {
-        switch (header.size) {
+        if (header.type != .uint) {
+            return ConvertError.InvalidValue;
+        }
+
+        defer self.rest = self.rest[header.size..];
+        return switch (header.size) {
             1 => readIntBig(u8, self.rest[0..1]),
             2 => readIntBig(u16, self.rest[0..2]),
             4 => readIntBig(u32, self.rest[0..4]),
             8 => readIntBig(u64, self.rest[0..8]),
             else => unreachable,
-        }
-        self.rest = self.rest[8..];
+        };
     }
 
     inline fn rawInt(self: *Unpack, header: Header) ConvertError!i64 {
-        switch (header.size) {
+        if (header.type != .int) {
+            return ConvertError.InvalidValue;
+        }
+
+        defer self.rest = self.rest[header.size..];
+        return switch (header.size) {
             1 => readIntBig(i8, self.rest[0..1]),
             2 => readIntBig(i16, self.rest[0..2]),
             4 => readIntBig(i32, self.rest[0..4]),
             8 => readIntBig(i64, self.rest[0..8]),
             else => unreachable,
-        }
-        self.rest = self.rest[8..];
+        };
     }
 
     /// Consume the current value as (signed or unsigned) integer,
     /// and casts to your requested type.
     ///
-    /// Use `i67` to make sure enough space for any unsigned integer.
+    /// Use `i65` to make sure enough space for any unsigned integer.
     pub fn int(self: *Unpack, Int: type, header: Header) ConvertError!Int {
         return switch (header.type) {
             .fixint => |n| std.math.cast(Int, n) orelse ConvertError.InvalidValue,
             .int => std.math.cast(Int, try self.rawInt(header)) orelse ConvertError.InvalidValue,
             .uint => std.math.cast(Int, try self.rawUInt(header)) orelse ConvertError.InvalidValue,
-            .float => std.math.cast(Int, try self.rawFloat(header)) orelse ConvertError.InvalidValue,
+            .float => @intFromFloat(try self.rawFloat(header)),
             else => ConvertError.InvalidValue,
         };
     }
@@ -688,19 +749,30 @@ pub const Unpack = struct {
         return value;
     }
 
+    fn checkedFloatFromInt(Float: type, i: anytype) ConvertError!Float {
+        const max = (2 << (std.math.floatMantissaBits(Float) + 1)) + 1;
+        const min = -max;
+
+        if (i > max or i < min) {
+            return ConvertError.InvalidValue;
+        }
+
+        return @floatFromInt(i);
+    }
+
     /// Consume the current value as float.
     pub fn float(self: *Unpack, Float: type, header: Header) ConvertError!Float {
         return switch (header.type) {
-            .float => std.math.cast(Float, try self.rawFloat(header)) orelse ConvertError.InvalidValue,
-            .fixint => |n| std.math.cast(Float, n) orelse ConvertError.InvalidValue,
-            .int => std.math.cast(Float, self.rawInt(header)) orelse ConvertError.InvalidValue,
-            .uint => std.math.cast(Float, self.rawUInt(header)) orelse ConvertError.InvalidValue,
+            .float => @floatCast(try self.rawFloat(header)),
+            .fixint => |n| checkedFloatFromInt(Float, n),
+            .int => checkedFloatFromInt(Float, try self.rawInt(header)),
+            .uint => checkedFloatFromInt(Float, try self.rawUInt(header)),
             else => ConvertError.InvalidValue,
         };
     }
 
     pub fn array(self: *Unpack, header: Header) ConvertError!UnpackArray {
-        if (header.type != .array) {
+        if (header.type != .array or header.type != .fixarray) {
             return ConvertError.InvalidValue;
         }
 
@@ -711,7 +783,7 @@ pub const Unpack = struct {
     }
 
     pub fn map(self: *Unpack, header: Header) ConvertError!UnpackMap {
-        if (header.type != .map) {
+        if (header.type != .map or header.type != .fixmap) {
             return ConvertError.InvalidValue;
         }
 

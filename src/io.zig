@@ -43,23 +43,24 @@ pub fn writeExt(writer: anytype, extype: i8, payload: []const u8) !usize {
 
 pub fn writeBool(writer: anytype, value: bool) !usize {
     var buf = [_]u8{0};
-    fmt.writeBool(&buf, value);
+    _ = fmt.writeBool(&buf, value);
     return try writer.write(&buf);
 }
 
 pub fn writeNil(writer: anytype) !usize {
     var buf = [_]u8{0};
-    fmt.writeNil(&buf);
+    _ = fmt.writeNil(&buf);
     return try writer.write(&buf);
 }
 
 fn BufferForNumber(comptime T: type) type {
-    const inf = @typeInfo(T);
-    const bsize = divCeil(switch (inf) {
-        .Int => |i| i.bits,
-        .Float => |f| f.bits,
+    const bsize = switch (@bitSizeOf(T)) {
+        1...8 => 1,
+        9...16 => 2,
+        17...32 => 4,
+        33...64 => 8,
         else => @compileError(comptimePrint("unsupported {}", .{@typeName(T)})),
-    }, 8);
+    };
     return [bsize + 1]u8;
 }
 
@@ -73,6 +74,7 @@ pub fn writeInt(writer: anytype, value: anytype) !usize {
 
 pub fn writeIntSm(writer: anytype, value: anytype) !usize {
     var buf: BufferForNumber(@TypeOf(value)) = undefined;
+    // std.debug.print("writeIntSm value={} buf.len={}\n", .{ value, buf.len });
     const bsize = fmt.writeIntSm(@TypeOf(value), &buf, value);
     const wsize = try writer.write(buf[0..bsize]);
     return wsize;
@@ -114,7 +116,7 @@ pub const ValueReader = struct {
     pub fn init(buffer: []u8) ValueReader {
         std.debug.assert(buffer.len >= 8);
         return .{
-            .unpack = .{ .result = &.{} },
+            .unpack = fmt.Unpack.init(&.{}),
             .buffer = buffer,
         };
     }
@@ -122,7 +124,7 @@ pub const ValueReader = struct {
     /// Peek the next value's type
     fn peek(self: *ValueReader, reader: anytype) !fmt.HeaderType {
         return self.unpack.peek() catch |err| switch (err) {
-            .BufferEmpty => whenBufferEmpty: {
+            error.BufferEmpty => whenBufferEmpty: {
                 const readsize = try reader.read(self.buffer);
                 if (readsize == 0) {
                     break :whenBufferEmpty error.EndOfStream;
@@ -137,7 +139,7 @@ pub const ValueReader = struct {
     }
 
     fn resetUnreadToStart(self: *ValueReader) usize {
-        std.mem.copyForwards(u8, self.buffer, self.unpack.rest.len);
+        std.mem.copyForwards(u8, self.buffer, self.unpack.rest);
         self.unpack.rest = self.buffer[0..self.unpack.rest.len];
         self.readsize = self.unpack.rest.len;
         return self.readsize;
