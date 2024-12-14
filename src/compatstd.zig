@@ -4,7 +4,7 @@ const bytesAsValue = std.mem.bytesAsValue;
 const asBytes = std.mem.asBytes;
 const nativeEndian = @import("builtin").cpu.arch.endian();
 
-const isZig0d14AndLater = !builtin.zig_version.order(.{ .major = 0, .minor = 14, .patch = 0 }).compare(.lt);
+const isZig0d14AndLater = builtin.zig_version.order(.{ .major = 0, .minor = 13, .patch = 0 }).compare(.gt);
 
 pub const mem = struct {
     pub fn writeIntBig(T: type, dst: *[@divExact(meta.bitsOfType(T), 8)]u8, value: T) void {
