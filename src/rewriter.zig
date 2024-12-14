@@ -1,43 +1,68 @@
 const std = @import("std");
 const zigpak = @import("zigpak");
 
+fn rewriteValue(
+    reader: anytype,
+    writer: anytype,
+    values: *zigpak.io.ValueReader,
+    h: zigpak.fmt.Header,
+) !void {
+    switch (h.type.family()) {
+        .nil => _ = try zigpak.io.writeNil(writer),
+        .bool => _ = try zigpak.io.writeBool(writer, try values.bool(reader, h)),
+        .int => _ = try zigpak.io.writeIntSm(writer, try values.int(reader, i64, h)),
+        .uint => _ = try zigpak.io.writeIntSm(writer, try values.int(reader, u64, h)),
+        .float => _ = try zigpak.io.writeFloat(writer, try values.float(reader, f64, h)),
+        .str => {
+            var strReader = try values.rawReader(reader, h);
+            var strbuf: [4096]u8 = undefined;
+            _ = try zigpak.io.writeStringPrefix(writer, h.size);
+            while (true) {
+                const readsize = try strReader.read(&strbuf);
+                if (readsize == 0) {
+                    break;
+                }
+                _ = try writer.write(strbuf[0..readsize]);
+            }
+        },
+        .bin => {
+            var strReader = try values.rawReader(reader, h);
+            var strbuf: [4096]u8 = undefined;
+            _ = try zigpak.io.writeBinaryPrefix(writer, h.size);
+            while (true) {
+                const readsize = try strReader.read(&strbuf);
+                if (readsize == 0) {
+                    break;
+                }
+                _ = try writer.write(strbuf[0..readsize]);
+            }
+        },
+        .array => {
+            var array = try values.array(h);
+            _ = try zigpak.io.writeArrayPrefix(writer, array.len);
+            while (try array.next(reader)) |elementh| {
+                try rewriteValue(reader, writer, values, elementh);
+            }
+        },
+        .map => {
+            var map = try values.map(h);
+            _ = try zigpak.io.writeMapPrefix(writer, map.len);
+            while (try map.next(reader)) |keyh| {
+                try rewriteValue(reader, writer, map.reader, keyh);
+                const valueh = try map.next(reader) orelse return error.InvalidValue;
+                try rewriteValue(reader, writer, map.reader, valueh);
+            }
+        },
+        else => return error.Unsupported,
+    }
+}
+
 fn rewrite(reader: anytype, writer: anytype) !void {
     var buffer: [4096]u8 = undefined;
     var vread = zigpak.io.ValueReader.init(&buffer);
     while (true) {
         const h = try vread.next(reader);
-        switch (h.type.family()) {
-            .nil => _ = try zigpak.io.writeNil(writer),
-            .bool => _ = try zigpak.io.writeBool(writer, try vread.bool(reader, h)),
-            .int => _ = try zigpak.io.writeIntSm(writer, try vread.int(reader, i64, h)),
-            .uint => _ = try zigpak.io.writeIntSm(writer, try vread.int(reader, u64, h)),
-            .float => _ = try zigpak.io.writeFloat(writer, try vread.float(reader, f64, h)),
-            .str => {
-                var strReader = try vread.rawReader(reader, h);
-                var strbuf: [4096]u8 = undefined;
-                _ = try zigpak.io.writeStringPrefix(writer, h.size);
-                while (true) {
-                    const readsize = try strReader.read(&strbuf);
-                    if (readsize == 0) {
-                        break;
-                    }
-                    _ = try writer.write(strbuf[0..readsize]);
-                }
-            },
-            .bin => {
-                var strReader = try vread.rawReader(reader, h);
-                var strbuf: [4096]u8 = undefined;
-                _ = try zigpak.io.writeBinaryPrefix(writer, h.size);
-                while (true) {
-                    const readsize = try strReader.read(&strbuf);
-                    if (readsize == 0) {
-                        break;
-                    }
-                    _ = try writer.write(strbuf[0..readsize]);
-                }
-            },
-            else => return error.Unsupported,
-        }
+        try rewriteValue(reader, writer, &vread, h);
     }
 }
 

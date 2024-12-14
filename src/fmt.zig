@@ -284,7 +284,7 @@ pub inline fn prefixMap(len: u32) Prefix {
         },
         maxInt(u16) + 1...maxInt(u32) => {
             result.appendAssumeCapacity(0xdf);
-            result.writer().writeInt(u32, len, .big);
+            result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }
     return result;

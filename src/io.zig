@@ -90,13 +90,13 @@ pub fn writeFloat(writer: anytype, value: anytype) !usize {
 
 pub fn writeArrayPrefix(writer: anytype, length: u32) !usize {
     const prefix = fmt.prefixArray(length);
-    const slice = prefix.toSlice();
+    const slice = prefix.constSlice();
     return try writer.write(slice);
 }
 
 pub fn writeMapPrefix(writer: anytype, length: u32) !usize {
     const prefix = fmt.prefixMap(length);
-    const slice = prefix.toSlice();
+    const slice = prefix.constSlice();
     return try writer.write(slice);
 }
 
@@ -123,19 +123,15 @@ pub const ValueReader = struct {
 
     /// Peek the next value's type
     fn peek(self: *ValueReader, reader: anytype) !fmt.HeaderType {
-        return self.unpack.peek() catch |err| switch (err) {
-            error.BufferEmpty => whenBufferEmpty: {
-                const readsize = try reader.read(self.buffer);
-                if (readsize == 0) {
-                    break :whenBufferEmpty error.EndOfStream;
-                }
-                const data = self.buffer[0..readsize];
-                self.unpack.setAppend(self.readsize, data);
-                self.readsize = readsize;
-                break :whenBufferEmpty self.peek(reader);
-            },
-            else => err,
-        };
+        while (true) {
+            return self.unpack.peek() catch |err| switch (err) {
+                error.BufferEmpty => {
+                    try self.readMore(reader);
+                    continue;
+                },
+                else => err,
+            };
+        }
     }
 
     fn resetUnreadToStart(self: *ValueReader) usize {
@@ -240,13 +236,13 @@ pub const ValueReader = struct {
     }
 
     pub fn array(self: *ValueReader, header: fmt.Header) !ArrayReader {
-        if (header.type == .array)
+        if (header.type == .array or header.type == .fixarray)
             return ArrayReader.init(self, header.size);
         return ConvertError.InvalidValue;
     }
 
     pub fn map(self: *ValueReader, header: fmt.Header) !MapReader {
-        if (header.type == .map)
+        if (header.type == .map or header.type == .fixmap)
             return MapReader.init(self, header.size);
         return ConvertError.InvalidValue;
     }
