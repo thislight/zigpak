@@ -12,6 +12,11 @@ jobs:
         zig:
           - latest
           - master
+        optimize:
+          - Debug
+          - ReleaseSafe
+          - ReleaseFast
+          - ReleaseSmall
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
@@ -26,4 +31,4 @@ jobs:
       - name: Install Test Dependencies
         run: bun i
       - name: Run Compatibility Test
-        run: zig build test-compat
+        run: zig build test-compat -Doptimize=${{ matrix.optimize }}
