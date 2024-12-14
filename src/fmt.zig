@@ -214,11 +214,11 @@ pub inline fn prefixString(len: u32) Prefix {
             result.appendAssumeCapacity(0xd9);
             result.appendAssumeCapacity(@intCast(len));
         },
-        maxInt(u8)...maxInt(u16) => {
+        maxInt(u8) + 1...maxInt(u16) => {
             result.appendAssumeCapacity(0xda);
             result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
         },
-        maxInt(u16)...maxInt(u32) => {
+        maxInt(u16) + 1...maxInt(u32) => {
             result.appendAssumeCapacity(0xdb);
             result.writer().writeInt(u32, len, .big) catch unreachable;
         },
@@ -231,15 +231,17 @@ pub inline fn prefixBinary(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...maxInt(u8) => {
-            result.appendAssumeCapacity(0xc4);
-            result.appendSliceAssumeCapacity(&.{ 0xc4, @as(u8, @intCast(len)) });
+            result.appendSliceAssumeCapacity(&.{
+                @intFromEnum(ContainerType.bin8),
+                @as(u8, @intCast(len)),
+            });
         },
-        maxInt(u8)...maxInt(u16) => {
-            result.appendAssumeCapacity(0xc5);
+        maxInt(u8) + 1...maxInt(u16) => {
+            result.appendAssumeCapacity(@intFromEnum(ContainerType.bin16));
             result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
         },
-        maxInt(u16)...maxInt(u32) => {
-            result.appendAssumeCapacity(0xc6);
+        maxInt(u16) + 1...maxInt(u32) => {
+            result.appendAssumeCapacity(@intFromEnum(ContainerType.bin32));
             result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }

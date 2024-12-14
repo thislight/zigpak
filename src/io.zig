@@ -9,8 +9,8 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
 pub fn writeStringPrefix(writer: anytype, length: u32) !usize {
-    const header = try fmt.prefixString(length);
-    return try writer.write(header.toSlice());
+    const header = fmt.prefixString(length);
+    return try writer.write(header.constSlice());
 }
 
 pub fn writeString(writer: anytype, src: []const u8) !usize {
@@ -20,8 +20,8 @@ pub fn writeString(writer: anytype, src: []const u8) !usize {
 }
 
 pub fn writeBinaryPrefix(writer: anytype, length: u32) !usize {
-    const header = try fmt.prefixBinary(length);
-    return try writer.write(header.toSlice());
+    const header = fmt.prefixBinary(length);
+    return try writer.write(header.constSlice());
 }
 
 pub fn writeBinary(writer: anytype, src: []const u8) !usize {
@@ -31,8 +31,8 @@ pub fn writeBinary(writer: anytype, src: []const u8) !usize {
 }
 
 pub fn writeExtPrefix(writer: anytype, length: u32, extype: i8) !usize {
-    const header = try fmt.prefixExt(length, extype);
-    return try writer.write(header.toSlice());
+    const header = fmt.prefixExt(length, extype);
+    return try writer.write(header.constSlice());
 }
 
 pub fn writeExt(writer: anytype, extype: i8, payload: []const u8) !usize {
@@ -294,7 +294,7 @@ pub fn RawReader(Reader: type) type {
         pub fn read(self: *@This(), dest: []u8) !usize {
             const readsize0 = try self.bufReader.read(dest);
             const dest1 = dest[readsize0..];
-            if (dest1 > 0) {
+            if (dest1.len > 0) {
                 const readsize1 = try self.streamReader.read(dest1);
                 return readsize0 + readsize1;
             }
