@@ -10,5 +10,6 @@
   },
   "dependencies": {
     "msgpackr": "^1.11.2"
-  }
+  },
+  "packageManager": "bun@1.1.38"
 }
