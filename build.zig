@@ -65,7 +65,6 @@ pub fn build(b: *std.Build) void {
 
         const runCompatTest = b.addSystemCommand(&.{ bun, "exec", COMPAT_RUN_CMD });
         runCompatTest.addArtifactArg(rewriter);
-        runCompatTest.step.dependOn(&rewriter.step);
         stepCompatTest.dependOn(&runCompatTest.step);
     }
 
