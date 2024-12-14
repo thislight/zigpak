@@ -18,7 +18,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v1.2.1
         with:
-          version: ${{ martix.zig }}
+          version: ${{ matrix.zig }}
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -29,4 +29,3 @@ jobs:
         run: bun i
       - name: Run Compatibility Test
         run: zig build test-compat
-          
