@@ -15,13 +15,13 @@ Supported:
 
 ## Use In Your Project
 
-Use a tarball link with `zig fetch --save`. You can find it in the "Tags" page. Some versions of zig can only fetch "tar.gz" file, so you may prefer this type.
+Use a tarball link with `zig fetch --save`. You can find it in the "Tags" page. Some versions of zig can only fetch "tar.gz" files, so you may prefer this type.
 
 ```sh
 zig fetch --save https://link-to-tarball
 ```
 
-Assume the saved name is the default "zigpak". In the build script, refer the "zigpak" module in it.
+Assume the saved name is the default "zigpak". In the build script, refer the "zigpak" module.
 
 ```zig
 // build.zig
