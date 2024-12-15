@@ -296,7 +296,10 @@ pub const UnpackReader = struct {
             },
             else => {
                 var r = try self.rawReader(reader, header);
-                try r.reader().skipBytes(std.math.maxInt(u64), .{});
+                r.reader().skipBytes(std.math.maxInt(u64), .{}) catch |err| switch (err) {
+                    error.EndOfStream => {}, // This value is ended
+                    else => return err,
+                };
             },
         }
     }
