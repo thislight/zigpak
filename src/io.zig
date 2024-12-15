@@ -200,16 +200,31 @@ pub const UnpackReader = struct {
         return self.unpack.int(Int, header);
     }
 
-    /// Create reader for the value's raw data. This function can be used on
-    /// any value that have determined byte size in the header. The arrays and
-    /// the maps could not be read use this function.
+    /// Create a reader for the value's raw data.
+    ///
+    /// This function can be used on any value that have determined
+    /// byte size in the header. The arrays and the maps could not be
+    /// read with this function.
+    /// To skip arrays and maps, see `skip`.
     ///
     /// Errors:
     /// - `ConvertError.InvalidValue` - the value could not be
     ///     converted to this host type
+    ///
+    /// ```zig
+    /// var unpacker: *UnpackReader;
+    /// const reader: std.io.AnyReader;
+    /// var buf: std.ArrayList(u8);
+    ///
+    /// const head = try unpacker.next(reader);
+    /// var rawReader = try unpacker.rawReader(reader, head);
+    ///
+    /// try rawReader.reader().readAllArrayList(&buf, 4096);
+    /// ```
     pub fn rawReader(self: *UnpackReader, reader: anytype, header: fmt.Header) !RawReader(@TypeOf(reader)) {
-        if (header.type == .map or header.type == .array) {
-            return fmt.Unpack.ConvertError.InvalidValue;
+        switch (header.type) {
+            .map, .array, .fixmap, .fixarray => return ConvertError.InvalidValue,
+            else => {},
         }
 
         const prefixSize = @min(self.unpack.rest.len, header.size);
