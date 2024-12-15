@@ -1,25 +1,42 @@
 # Zigpak
 
-Messagepack implementation for Zig.
+Messagepack for Zig.
 
-Supported Zig 0.12 & 0.13
+- [API References (latest release)](https://zigpak.pages.dev/zigpak/)
+- [API References (master)](https://master.zigpak.pages.dev/zigpak/)
 
-## Usage
+Supported:
 
-Include this package and use the module "zigpak". This module include two sub fields:
+- Zig 0.12 (best effort)
+- Zig 0.13
+- Zig 0.14 (the master branch)
 
-- `zigpak.fmt` - The tools to emit messagepack values directly
-- `zigpak.io` - Utilities to work with `std.io.Reader` and `std.io.Writer`.
+## Use In Your Project
 
-`zigpak.fmt` has two kinds of writing functions and two kinds of reading functions:
+Use a tarball link with `zig fetch --save`. You can find it in the "Tags" page. Some versions of zig can only fetch "tar.gz" file, so you may prefer this type.
 
-- `prefix*` emits the prefixing of the value. Usually the values are no need to be transformed and can be written directly.
-- `write*` accepts a value and writes into a buffer. The function name suffixed with `Sm` means this function uses run-time branching to reduce result size as possible.
+```sh
+zig fetch --save https://link-to-tarball
+```
 
-- `readValue` and `.next` in `Value.LazyArray` and `Value.LazyMap` reads a value and returns in a dynamic-typed favour.
-- `.nextOf` in `Value.LazyArray` and `Value.LazyMap` accepts a specific type and generate code to read only the specific type. This may reduce run-time branching and affect performance.
+Assume the saved name is the default "zigpak". In the build script, refer the "zigpak" module in it.
+
+```zig
+// build.zig
+
+pub fn build(b: *std.Build) void {
+    // ...
+    const exe: *std.Build.Compile;
+
+    const zigpak = b.dependency("zigpak", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("zigpak");
+
+    exe.root_module.addImport("zigpak", zigpak);
+}
+```
 
 ## License
 
 Apache-2.0
-
