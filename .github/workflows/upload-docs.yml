@@ -1,0 +1,30 @@
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1.2.1
+        with:
+          version: latest
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install Test Dependencies
+        run: bun i
+      - name: Build Docs
+        run: zig build -Demit-docs
+      - name: Upload Docs
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy zig-out/docs --project-name=zigpak
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
