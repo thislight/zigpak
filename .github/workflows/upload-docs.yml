@@ -5,6 +5,7 @@ on:
     tags:
       - v*
 
+name: Upload Docs
 jobs:
   upload-docs:
     runs-on: ubuntu-24.04

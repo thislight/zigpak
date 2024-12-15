@@ -4,6 +4,7 @@ on:
       - master
   pull_request:
 
+name: Checks
 jobs:
   check:
     runs-on: ubuntu-24.04

@@ -2,6 +2,8 @@
 
 Messagepack for Zig.
 
+[![Checks](https://github.com/thislight/zigpak/actions/workflows/main.yml/badge.svg?branch=master&name=Checks)](https://github.com/thislight/zigpak/actions/workflows/main.yml)
+
 - [API References (latest release)](https://zigpak.pages.dev/zigpak/)
 - [API References (master)](https://master.zigpak.pages.dev/zigpak/)
 
