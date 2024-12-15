@@ -23,6 +23,8 @@ pub fn build(b: *std.Build) void {
         "Emit documents to <zig-out>/docs (default: false)",
     ) orelse false;
 
+    const kcov = b.option([]const []const u8, "kcov", "Arguments for kcov in testing (default: null = disabled)");
+
     const stepCheck = b.step("check", "Build but don't install");
     const stepTest = b.step("test", "Run library tests");
     const stepCompatTest = b.step("test-compat", "Run compatibility tests");
@@ -95,11 +97,26 @@ pub fn build(b: *std.Build) void {
 
         stepCheck.dependOn(&rewriter.step);
 
-        const COMPAT_RUN_CMD = "ZIGPAK_REWRITER=$1 bun test";
+        if (kcov) |args| {
+            const COMPAT_RUN_CMD = "ZIGPAK_REWRITER=$1 KCOV=kcov KCOV_ARGS=\"--include-path=$2 $3\" KCOV_REPORT=$4 bun test";
 
-        const runCompatTest = b.addSystemCommand(&.{ "bun", "exec", COMPAT_RUN_CMD });
-        runCompatTest.addArtifactArg(rewriter);
-        stepCompatTest.dependOn(&runCompatTest.step);
+            const kcovArgs = std.mem.join(
+                b.allocator,
+                " ",
+                args[0..@max(args.len - 1, 0)],
+            ) catch @panic("OOM");
+
+            const runCompatTest = b.addSystemCommand(&.{ "bun", "exec", COMPAT_RUN_CMD });
+            runCompatTest.addArtifactArg(rewriter);
+            runCompatTest.addArgs(&.{ b.build_root.path orelse ".", kcovArgs, args[args.len - 1] });
+            stepCompatTest.dependOn(&runCompatTest.step);
+        } else {
+            const COMPAT_RUN_CMD = "ZIGPAK_REWRITER=$1 bun test";
+
+            const runCompatTest = b.addSystemCommand(&.{ "bun", "exec", COMPAT_RUN_CMD });
+            runCompatTest.addArtifactArg(rewriter);
+            stepCompatTest.dependOn(&runCompatTest.step);
+        }
     }
 
     {
@@ -109,8 +126,21 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
 
-        const run_main_tests = b.addRunArtifact(tests);
-
-        stepTest.dependOn(&run_main_tests.step);
+        if (kcov) |args| {
+            const run = b.addSystemCommand(&.{"kcov"});
+            const includeArg = std.fmt.allocPrint(
+                b.allocator,
+                "--include-path={s}",
+                .{b.build_root.path orelse "."},
+            ) catch @panic("OOM");
+            run.addArg(includeArg);
+            run.addArgs(args);
+            run.addArtifactArg(tests);
+            run.enableTestRunnerMode();
+            stepTest.dependOn(&run.step);
+        } else {
+            const run = b.addRunArtifact(tests);
+            stepTest.dependOn(&run.step);
+        }
     }
 }
