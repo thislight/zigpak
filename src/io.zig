@@ -286,22 +286,62 @@ pub const UnpackReader = struct {
     /// - from the reader's error
     pub fn skip(self: *UnpackReader, reader: anytype, header: fmt.Header) !void {
         switch (header.type) {
-            .array => {
+            .array, .fixarray => {
                 var r = try self.array(header);
-                _ = try r.skipAll(reader);
+
+                while (r.next(reader) catch |err| switch (err) {
+                    error.EndOfStream => null,
+                    else => return err,
+                }) |head| {
+                    try self.skip(reader, head);
+                }
             },
-            .map => {
+            .map, .fixmap => {
                 var r = try self.map(header);
-                _ = try r.skipAll(reader);
+
+                while (r.next(reader) catch |err| switch (err) {
+                    error.EndOfStream => null,
+                    else => return err,
+                }) |head| {
+                    try self.skip(reader, head);
+                }
             },
             else => {
-                var r = try self.rawReader(reader, header);
-                r.reader().skipBytes(std.math.maxInt(u64), .{}) catch |err| switch (err) {
-                    error.EndOfStream => {}, // This value is ended
-                    else => return err,
-                };
+                var r = self.rawReader(reader, header) catch unreachable;
+                try r.reader().skipBytes(header.size, .{});
             },
         }
+    }
+
+    test skip {
+        const t = std.testing;
+
+        var content: std.BoundedArray(u8, fmt.PREFIX_BUFSIZE * 1 + "Hello".len) = .{};
+        _ = try writeString(content.writer(), "Hello");
+        var stream = std.io.fixedBufferStream(content.constSlice());
+
+        var buf: [256]u8 = undefined;
+        var unpacker = UnpackReader.init(&buf);
+        const head = try unpacker.next(stream.reader());
+        const value = try unpacker.rawDupe(stream.reader(), t.allocator, head, 256);
+        defer t.allocator.free(value);
+        try t.expectEqualStrings("Hello", value);
+    }
+
+    test "skip returns error.EndOfStream if the stream is ended early" {
+        const t = std.testing;
+
+        var content: std.BoundedArray(u8, fmt.PREFIX_BUFSIZE * 1 + "Hello".len) = .{};
+        _ = try writeString(content.writer(), "Hello");
+        var stream = std.io.fixedBufferStream(content.constSlice()[0 .. content.len - 1]);
+
+        var buf: [256]u8 = undefined;
+        var unpacker = UnpackReader.init(&buf);
+        const head = try unpacker.next(stream.reader());
+        try t.expectError(
+            error.EndOfStream,
+            unpacker.skip(stream.reader(), head),
+        );
     }
 };
 
@@ -332,7 +372,7 @@ pub fn RawReader(Reader: type) type {
             return readsize0;
         }
 
-        pub const ReaderPtr = std.io.GenericReader(*@This(), LitmitedReader.Error | BufferReader.ReadError, read);
+        pub const ReaderPtr = std.io.GenericReader(*@This(), LitmitedReader.Error || BufferReader.ReadError, read);
 
         pub fn reader(self: *@This()) ReaderPtr {
             return ReaderPtr{ .context = self };
@@ -471,3 +511,7 @@ pub const MapReader = struct {
         return self.current - c0;
     }
 };
+
+test {
+    _ = UnpackReader;
+}
