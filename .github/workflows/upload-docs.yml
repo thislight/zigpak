@@ -2,9 +2,11 @@ on:
   push:
     branches:
       - master
+    tags:
+      - v*
 
 jobs:
-  check:
+  upload-docs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -28,3 +30,11 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy zig-out/docs --project-name=zigpak
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Docs to Prod
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy zig-out/docs --project-name=zigpak --branch=main
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+        if: github.ref_type == 'tags'
