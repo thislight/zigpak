@@ -38,4 +38,4 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy zig-out/docs --project-name=zigpak --branch=main
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-        if: github.ref_type == 'tags'
+        if: startsWith(github.ref_name, 'v')
