@@ -1,5 +1,15 @@
 // SPDX: Apache-2.0
 // This file is part of zigpak.
+//! ## `std.io` helpers for zigpak
+//!
+//! - Unpack data from reader: `UnpackReader`
+//! - Write messagepack values into writer:
+//!   - `writeStringPrefix`, `writeString`
+//!   - `writeBinaryPrefix`, `writeBinary`
+//!   - `writeExtPrefix`, `writeExt`
+//!   - `writeBool`, `writeNil`
+//!   - `writeInt`, `writeIntSm`, `writeFloat`
+//!   - `writeArrayPrefix`, `writeMapPrefix`
 const fmt = @import("./root.zig");
 const std = @import("std");
 const log2IntCeil = std.math.log2_int_ceil;
@@ -102,18 +112,25 @@ pub fn writeMapPrefix(writer: anytype, length: u32) !usize {
 
 /// Wrapper to read value from a `std.io.GenericReader`.
 ///
-/// You need a buffer to read the values, at least 8 bytes.
-/// Bigger buffer increases the effieiency of reading. The recommended
-/// size is at least 4KB, the usual size of a OS memory page.
+/// The usage is almost same to the `fmt.Unpack`, but you
+/// could not peek on this reader. Calling `ValueReader.next`
+/// will read the supplied reader and return the header.
+///
+/// The `fmt.Unpack.raw` is replaced by `UnpackReader.rawReader` and
+/// `UnpackReader.rawDupe` in this structure.
+///
+/// The data from the supplied reader will be buffered in this reader.
+/// The buffer is at least 8 bytes. Bigger buffer increases the reading effieiency.
 /// The supplied reader may be read at any time.
 ///
-/// The functions are not concurrency-safe.
-pub const ValueReader = struct {
+/// - Concurrency-safe: No
+/// - See "src/rewriter.zig" in the code repository for a complete example.
+pub const UnpackReader = struct {
     unpack: fmt.Unpack,
     buffer: []u8,
     readsize: usize = 0,
 
-    pub fn init(buffer: []u8) ValueReader {
+    pub fn init(buffer: []u8) UnpackReader {
         std.debug.assert(buffer.len >= 8);
         return .{
             .unpack = fmt.Unpack.init(&.{}),
@@ -122,7 +139,7 @@ pub const ValueReader = struct {
     }
 
     /// Peek the next value's type
-    fn peek(self: *ValueReader, reader: anytype) !fmt.HeaderType {
+    fn peek(self: *UnpackReader, reader: anytype) !fmt.HeaderType {
         while (true) {
             return self.unpack.peek() catch |err| switch (err) {
                 error.BufferEmpty => {
@@ -134,7 +151,7 @@ pub const ValueReader = struct {
         }
     }
 
-    fn resetUnreadToStart(self: *ValueReader) usize {
+    fn resetUnreadToStart(self: *UnpackReader) usize {
         std.mem.copyForwards(u8, self.buffer, self.unpack.rest);
         self.unpack.rest = self.buffer[0..self.unpack.rest.len];
         self.readsize = self.unpack.rest.len;
@@ -145,7 +162,7 @@ pub const ValueReader = struct {
     /// identify the value type.
     ///
     /// Return `error.EndOfStream` if the stream is ended.
-    pub fn next(self: *ValueReader, reader: anytype) !fmt.Header {
+    pub fn next(self: *UnpackReader, reader: anytype) !fmt.Header {
         const htyp = try self.peek(reader);
         if (htyp.nextComponentSize() > self.unpack.rest.len) {
             try self.readMore(reader);
@@ -153,7 +170,7 @@ pub const ValueReader = struct {
         return self.unpack.next(htyp);
     }
 
-    fn readMore(self: *ValueReader, reader: anytype) !void {
+    fn readMore(self: *UnpackReader, reader: anytype) !void {
         const emptyOfs = self.resetUnreadToStart();
         const restBuffer = self.buffer[emptyOfs..];
         const readsize = try reader.read(restBuffer);
@@ -168,15 +185,15 @@ pub const ValueReader = struct {
 
     pub const ConvertError = fmt.Unpack.ConvertError;
 
-    pub fn nil(self: *ValueReader, _: anytype, header: fmt.Header) !@TypeOf(null) {
+    pub fn nil(self: *UnpackReader, _: anytype, header: fmt.Header) !@TypeOf(null) {
         return self.unpack.nil(header);
     }
 
-    pub fn @"bool"(self: *ValueReader, _: anytype, header: fmt.Header) !bool {
+    pub fn @"bool"(self: *UnpackReader, _: anytype, header: fmt.Header) !bool {
         return self.unpack.bool(header);
     }
 
-    pub fn int(self: *ValueReader, reader: anytype, Int: type, header: fmt.Header) !Int {
+    pub fn int(self: *UnpackReader, reader: anytype, Int: type, header: fmt.Header) !Int {
         while (header.size > self.unpack.rest.len) {
             try self.readMore(reader);
         }
@@ -190,7 +207,7 @@ pub const ValueReader = struct {
     /// Errors:
     /// - `ConvertError.InvalidValue` - the value could not be
     ///     converted to this host type
-    pub fn rawReader(self: *ValueReader, reader: anytype, header: fmt.Header) !RawReader(@TypeOf(reader)) {
+    pub fn rawReader(self: *UnpackReader, reader: anytype, header: fmt.Header) !RawReader(@TypeOf(reader)) {
         if (header.type == .map or header.type == .array) {
             return fmt.Unpack.ConvertError.InvalidValue;
         }
@@ -212,7 +229,7 @@ pub const ValueReader = struct {
     /// - from `Allocator.Error`
     /// - from the reader's error
     pub fn rawDupe(
-        self: *ValueReader,
+        self: *UnpackReader,
         reader: anytype,
         allocator: Allocator,
         header: fmt.Header,
@@ -227,7 +244,7 @@ pub const ValueReader = struct {
         return list.toOwnedSlice();
     }
 
-    pub fn float(self: *ValueReader, reader: anytype, Float: type, header: fmt.Header) !Float {
+    pub fn float(self: *UnpackReader, reader: anytype, Float: type, header: fmt.Header) !Float {
         while (header.size > self.unpack.rest.len) {
             try self.readMore(reader);
         }
@@ -235,13 +252,13 @@ pub const ValueReader = struct {
         return self.unpack.float(Float, header);
     }
 
-    pub fn array(self: *ValueReader, header: fmt.Header) !ArrayReader {
+    pub fn array(self: *UnpackReader, header: fmt.Header) !ArrayReader {
         if (header.type == .array or header.type == .fixarray)
             return ArrayReader.init(self, header.size);
         return ConvertError.InvalidValue;
     }
 
-    pub fn map(self: *ValueReader, header: fmt.Header) !MapReader {
+    pub fn map(self: *UnpackReader, header: fmt.Header) !MapReader {
         if (header.type == .map or header.type == .fixmap)
             return MapReader.init(self, header.size);
         return ConvertError.InvalidValue;
@@ -252,7 +269,7 @@ pub const ValueReader = struct {
     /// Errors:
     /// - `error.EndOfStream` - the stream is ended
     /// - from the reader's error
-    pub fn skip(self: *ValueReader, reader: anytype, header: fmt.Header) !void {
+    pub fn skip(self: *UnpackReader, reader: anytype, header: fmt.Header) !void {
         switch (header.type) {
             .array => {
                 var r = try self.array(header);
@@ -326,11 +343,11 @@ pub fn RawReader(Reader: type) type {
 /// }
 /// ```
 pub const ArrayReader = struct {
-    reader: *ValueReader,
+    reader: *UnpackReader,
     current: u32 = 0,
     len: u32,
 
-    pub fn init(reader: *ValueReader, len: u32) ArrayReader {
+    pub fn init(reader: *UnpackReader, len: u32) ArrayReader {
         return .{
             .reader = reader,
             .len = len,
@@ -392,7 +409,7 @@ pub const ArrayReader = struct {
 /// }
 /// ```
 pub const MapReader = struct {
-    reader: *ValueReader,
+    reader: *UnpackReader,
     current: u32 = 0,
     len: u32,
     /// If the current value is key or value.
@@ -400,7 +417,7 @@ pub const MapReader = struct {
     /// The value is undefined before the first call of the `next`.
     is_value: bool = false,
 
-    pub fn init(reader: *ValueReader, len: u32) MapReader {
+    pub fn init(reader: *UnpackReader, len: u32) MapReader {
         return .{
             .reader = reader,
             .len = len,

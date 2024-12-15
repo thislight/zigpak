@@ -1,5 +1,96 @@
 // SPDX: Apache-2.0
 // This file is part of zigpak.
+//! ## Zigpak - Messagepack for Zig
+//!
+//! - Unpack data in memory: `Unpack`
+//! - Emit messagepack values into memory:
+//!   - `writeNil`, `writeBool`
+//!   - `writeInt`, `writeIntSm`, `writeFloat`
+//!   - `prefixString`, `prefixBinary`, `prefixExt`
+//!   - `prefixArray`, `prefixMap`
+//! - `std.io` helpers: `io`
+//!
+//! ### Emit variable-sized messagepack values
+//!
+//! A messagepack document (contains of zero or one messagepack value) is
+//! a linear representation of value(s).
+//!
+//! For example, you put a string into the document. The value is layout linearly:
+//!
+//! ```
+//! | (str:11) | "Hello World" |
+//! ^ ~~~~~ The container type (prefix)
+//!             ^ ~~~~~~ The string content
+//! ```
+//!
+//! So to put a string into the document, use the `prefixString` to write the
+//! prefix, and write the content.
+//!
+//! ```zig
+//! const content = "Hello World";
+//!
+//! var buf: [content.len + zigpak.PREFIX_BUFSIZE]u8 = undefined;
+//! const prefix = zigpak.prefixString(@intCast(content.len));
+//! std.mem.copyForward(u8, &buf, prefix.constSlice());
+//! std.mem.copyForward(u8, buf[prefix.len..], content);
+//!
+//! const result = buf[0..prefix.len + content.len]; // the constructed value
+//! ```
+//!
+//! > You can also directly write the prefix and the content into
+//! > an external pipe, see `io`.
+//!
+//! Writing array or map is similar. The elements of any of them are
+//! layout linearly on the element level. Let's say we put into array with a nil,
+//! an int 1 and a string.
+//!
+//! ```
+//! | (array:3) | (nil) | (int) | 0x01 | (str:11) | "Hello World" |
+//! ^ ~~~ The container type (prefix) for the array
+//!              ^ ~~~~~ Elements are layout linearly
+//!                                        ^ ~~~~ The string follows the same rule
+//! ```
+//!
+//! So the array can be constructed as:
+//!
+//! ```zig
+//! usingnamespace zigpak;
+//!
+//! const strContent = "Hello World";
+//!
+//! var buf: std.BoundedArray(u8, zigpak.PREFIX_BUFSIZE * 4 + 1 + strContent.length) = .{};
+//!
+//! buf.appendSliceAssumeCapacity(prefixArray(3).constSlice());
+//!
+//! { // The first element: nil
+//!     buf.len += writeNil(buf.unusedCapacitySlice());
+//! }
+//!
+//! { // The second element: int 1
+//!     buf.len += writeInt(i8, buf.unusedCapacitySlice(), 1);
+//! }
+//!
+//! { // The third element: a string
+//!     buf.appendSliceAssumeCapacity(prefixString(@intCast(strContent.length)).constSlice());
+//!     buf.appendSliceAssumeCapacity(strContent);
+//! }
+//!
+//! const result = buf.constSlice(); // the constructed array
+//! ```
+//!
+//! The map's process is almost same to the array's:
+//!
+//! - The map's size is the number of the key-value pairs, like
+//!   the size of `{ .a = 1, .b = "Hello World" }` is 2;
+//! - Map's layout is an array of key-value pairs: the first key,
+//!   the first value, the second key, and so on.
+//!
+//! For the `{ .a = 1, .b = "Hello World" }`, the layout is like:
+//!
+//! ```
+//! | (map:2) | (int) | 0x01 | (str:11) | "Hello World" |
+//! ```
+//!
 
 pub const io = @import("./io.zig");
 
@@ -191,10 +282,23 @@ pub fn writeBool(dst: []u8, value: bool) usize {
     return 1;
 }
 
-/// The prefix for a value.
+/// Use this constant to decide the `Prefix` buffer size in comptime.
 ///
-/// This is the header to be stored before the actual value.
-pub const Prefix = std.BoundedArray(u8, 6);
+/// The prefixs are not always filled up all the buffer.
+///
+/// ```zig
+/// var buf: [zigpak.PREFIX_BUFSIZE]u8 = undefined;
+///
+/// const prefix = prefixString(12);
+/// std.mem.copyForward(u8, &buf, prefix.constSlice());
+///
+/// const header = buf[0..prefix.len]; // the actual header
+/// ```
+pub const PREFIX_BUFSIZE = 6;
+
+/// The prefix for a value.
+/// This is the header to be stored before the actual content.
+pub const Prefix = std.BoundedArray(u8, PREFIX_BUFSIZE);
 
 /// Generate a string prefix.
 pub inline fn prefixString(len: u32) Prefix {
@@ -501,10 +605,21 @@ pub const HeaderType = union(enum) {
 };
 
 pub const Header = struct {
+    /// The type of the header.
+    ///
+    /// > Keep in mind: the `HeaderType` has separated fixed-number types.
+    /// > Like `HeaderType.map` and `HeaderType.fixmap` are
+    /// > exists together. Don't forget to include them in
+    /// > your type test! Or use the `HeaderType.family` to
+    /// > get the type family.
     type: HeaderType,
+    /// The extension type.
+    ///
+    /// `<0` are defined by the messagepack spec.
+    /// `>=0` are application defined.
     ext: i8 = 0,
     /// Body size. For primitives, it's the byte size of the value body.
-    /// For array and map, it's the item number of array or map.
+    /// For array and map, it's the item number of the array or the map.
     size: u32 = 0,
 
     pub fn from(typ: HeaderType, rest: []const u8) struct { Header, usize } {
@@ -587,8 +702,39 @@ pub const ValueTypeFamily = enum {
 
 /// Unpacking state.
 ///
-/// ```zig
-/// const unpack: Unpack = .{.rest = data};
+/// This structure manages user-supplied data and converts messagepack
+/// representations to the host representation.
+///
+/// To start unpacking, you supply the data with `Unpack.init`.
+///
+/// - `Unpack.peek` begins the unpack process for a value.
+///   - The function returns a `HeaderType`.
+///   - Use `HeaderType.nextComponentSize` to get the required data size
+///     for the header.
+/// - Ensured the `Unpack.rest` have enough data, use `Unpack.next` move to
+///  the next value and extract the header.
+///   - The result is a `Header`, it can be inspected to decide what to do with
+///     the current value.
+/// - You can consume the value with any of `Unpack.nil`,
+///   `Unpack.@"bool"`, `Unpack.int`, `Unpack.float`, `Unpack.array`,
+///   `Unpack.map`, `Unpack.raw`.
+///
+/// You must consume the current value for the next value. To skip the
+/// current value, use `Unpack.raw`. `Unpack.raw` can consume any value
+/// as a []const u8, excepts arrays and maps.
+/// Because they don't have determined byte size in header, see `Header.size`.
+///
+/// If the buffer is appended with more data, use `Unpack.setAppend` to set the
+/// updated buffer.
+///
+/// This structure does not have additional internal state. You can
+/// save the state and return to the point as you wish.
+///
+/// - Concurrency-safe: No
+/// - See `io.UnpackReader`
+///
+/// ```
+/// const unpack: Unpack = Unpack.init(data);
 ///
 /// if (unpack.peek()) |peek| {
 ///     const requiredSize = peek.nextComponentSize();
@@ -610,8 +756,6 @@ pub const ValueTypeFamily = enum {
 ///     doSomething(); // No enough data to peek
 /// }
 /// ```
-///
-/// - Concurrency-safe: No
 pub const Unpack = struct {
     rest: []const u8,
 
@@ -672,6 +816,9 @@ pub const Unpack = struct {
         return ConvertError.InvalidValue;
     }
 
+    /// Consumes the current value as a bool.
+    ///
+    /// This function does not need additional data from the buffer.
     pub fn @"bool"(_: *Unpack, header: Header) ConvertError!bool {
         return switch (header.type) {
             .bool => |v| v,
@@ -709,8 +856,7 @@ pub const Unpack = struct {
         };
     }
 
-    /// Consume the current value as (signed or unsigned) integer,
-    /// and casts to your requested type.
+    /// Consume the current value and casts to your requested integer type.
     ///
     /// Use `i65` to make sure enough space for any unsigned integer.
     pub fn int(self: *Unpack, Int: type, header: Header) ConvertError!Int {
@@ -755,7 +901,7 @@ pub const Unpack = struct {
         return @floatFromInt(i);
     }
 
-    /// Consume the current value as float.
+    /// Consume the current value and casts to requested float type.
     pub fn float(self: *Unpack, Float: type, header: Header) ConvertError!Float {
         return switch (header.type) {
             .float => @floatCast(try self.rawFloat(header)),

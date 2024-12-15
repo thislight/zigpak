@@ -1,3 +1,5 @@
+// SPDX: Apache-2.0
+// This file is part of zigpak.
 const std = @import("std");
 const builtin = @import("builtin");
 const bytesAsValue = std.mem.bytesAsValue;

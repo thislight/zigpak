@@ -1,10 +1,12 @@
+// SPDX: Apache-2.0
+// This file is part of zigpak.
 const std = @import("std");
 const zigpak = @import("zigpak");
 
 fn rewriteValue(
     reader: anytype,
     writer: anytype,
-    values: *zigpak.io.ValueReader,
+    values: *zigpak.io.UnpackReader,
     h: zigpak.Header,
 ) !void {
     switch (h.type.family()) {
@@ -59,7 +61,7 @@ fn rewriteValue(
 
 fn rewrite(reader: anytype, writer: anytype) !void {
     var buffer: [4096]u8 = undefined;
-    var vread = zigpak.io.ValueReader.init(&buffer);
+    var vread = zigpak.io.UnpackReader.init(&buffer);
     while (true) {
         const h = try vread.next(reader);
         try rewriteValue(reader, writer, &vread, h);
