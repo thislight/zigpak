@@ -88,7 +88,7 @@
 //! For the `{ .a = 1, .b = "Hello World" }`, the layout is like:
 //!
 //! ```
-//! | (map:2) | (int) | 0x01 | (str:11) | "Hello World" |
+//! | (map:2) | (str:1) | "a" | (int) | 0x01 | (str:1) | "b" | (str:11) | "Hello World" |
 //! ```
 //!
 
