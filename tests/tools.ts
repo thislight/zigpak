@@ -6,15 +6,17 @@ import { tmpdir } from "node:os";
 const REWRITER =
   process.env["ZIGPAK_REWRITER"] || "./zig-out/bin/zigpak-rewriter";
 
-function runRewriter(data: Uint8Array | ArrayBuffer | Buffer) {
-  if (KCOV) {
-    const collectPath = mkdtempSync(join(tmpdir(), "zigpak-"));
-    coverages.push(collectPath);
-    return Bun.$`${KCOV} ${KCOV_ARGS} --collect-only ${collectPath} ${REWRITER} < ${data}`;
-  } else {
-    return Bun.$`${REWRITER} < ${data}`;
-  }
+function runRewriterKcov(data: Uint8Array | ArrayBuffer | Buffer) {
+  const collectPath = mkdtempSync(join(tmpdir(), "zigpak-"));
+  coverages.push(collectPath);
+  return Bun.$`${KCOV} ${KCOV_ARGS} --collect-only ${collectPath} ${REWRITER} < ${data}`;
 }
+
+function runRewriterRegular(data: Uint8Array | ArrayBuffer | Buffer) {
+  return Bun.$`${REWRITER} < ${data}`;
+}
+
+const runRewriter = KCOV ? runRewriterKcov : runRewriterRegular;
 
 export async function rewriter(data: Uint8Array | ArrayBuffer | Buffer) {
   const { stdout, stderr, exitCode } = await runRewriter(data)

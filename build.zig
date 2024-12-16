@@ -92,13 +92,15 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/rewriter.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = if (kcov != null) false else null,
+            .single_threaded = true,
         });
         rewriter.root_module.addImport("zigpak", core);
 
         stepCheck.dependOn(&rewriter.step);
 
         if (kcov) |args| {
-            const COMPAT_RUN_CMD = "ZIGPAK_REWRITER=$1 KCOV=kcov KCOV_ARGS=\"--include-path=$2 $3\" KCOV_REPORT=$4 bun test";
+            const COMPAT_RUN_CMD = "ZIGPAK_REWRITER=$1 KCOV=kcov KCOV_ARGS=\"--include-path=$2 --skip-solibs $3\" KCOV_REPORT=$4 bun test";
 
             const kcovArgs = std.mem.join(
                 b.allocator,
@@ -136,7 +138,8 @@ pub fn build(b: *std.Build) void {
             run.addArg(includeArg);
             run.addArgs(args);
             run.addArtifactArg(tests);
-            run.enableTestRunnerMode();
+            // run.enableTestRunnerMode();
+            // Kcov does not respect the test runner protocol
             stepTest.dependOn(&run.step);
         } else {
             const run = b.addRunArtifact(tests);
