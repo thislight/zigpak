@@ -121,7 +121,7 @@ pub fn writeMapPrefix(writer: anytype, length: u32) !usize {
 /// Wrapper to read value from a `std.io.GenericReader`.
 ///
 /// The usage is almost same to the `fmt.Unpack`, but you
-/// could not peek on this reader. Calling `ValueReader.next`
+/// could not peek on this reader. Calling `UnpackReader.next`
 /// will read the supplied reader and return the header.
 ///
 /// The `fmt.Unpack.raw` is replaced by `UnpackReader.rawReader` and
@@ -426,7 +426,7 @@ pub const ArrayReader = struct {
     /// the reader can no longer read.
     ///
     /// Errors:
-    /// - from `ValueReader.next`
+    /// - from `UnpackReader.next`
     pub fn next(self: *ArrayReader, reader: anytype) !?fmt.Header {
         if (self.current >= self.len) {
             return null;
