@@ -14,7 +14,7 @@ fn rewriteValue(
         .bool => _ = try zigpak.io.writeBool(writer, try values.bool(reader, h)),
         .int => _ = try zigpak.io.writeIntSm(writer, try values.int(reader, i64, h)),
         .uint => _ = try zigpak.io.writeIntSm(writer, try values.int(reader, u64, h)),
-        .float => _ = try zigpak.io.writeFloat(writer, try values.float(reader, f64, h)),
+        .float => _ = try zigpak.io.writeFloatSm(writer, try values.float(reader, f64, h)),
         .str => {
             var strReader = try values.rawReader(reader, h);
             var strbuf: [4096]u8 = undefined;

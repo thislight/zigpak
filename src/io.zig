@@ -98,6 +98,14 @@ pub fn writeFloat(writer: anytype, value: anytype) !usize {
     return wsize;
 }
 
+pub fn writeFloatSm(writer: anytype, value: anytype) !usize {
+    const T = @TypeOf(value);
+    var buf: BufferForNumber(@TypeOf(value)) = undefined;
+    const bsize = fmt.writeFloatSm(T, &buf, value);
+    const wsize = try writer.write(buf[0..bsize]);
+    return wsize;
+}
+
 pub fn writeArrayPrefix(writer: anytype, length: u32) !usize {
     const prefix = fmt.prefixArray(length);
     const slice = prefix.constSlice();

@@ -259,6 +259,20 @@ pub fn writeFloat(comptime T: type, dst: []u8, value: T) usize {
     return 1 + roundedBytes;
 }
 
+/// Write the float as the smallest float type,
+/// as long as the precision won't lost.
+///
+/// This may introduce runtime check for certain input types.
+pub inline fn writeFloatSm(comptime T: type, dst: []u8, value: T) usize {
+    const wontLosePrecision = @as(f32, @floatCast(value)) == value;
+
+    if (wontLosePrecision) {
+        return writeFloat(f32, dst, @floatCast(value));
+    } else {
+        return writeFloat(f64, dst, @floatCast(value));
+    }
+}
+
 /// Write nil into the `dst`.
 pub fn writeNil(dst: []u8) usize {
     dst[0] = 0xc0;
