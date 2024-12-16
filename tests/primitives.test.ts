@@ -21,10 +21,13 @@ describe("bool", () => {
 });
 
 describe("int", () => {
-  test("0", primitive(0n));
-  test("1", primitive(1n));
+  test("0", primitive(0));
+  test("1", primitive(1));
+  test("-1", primitive(-1));
+
   test("i64max", primitive(2n ** 63n - 1n));
   test("i64min", primitive(-(2n ** 63n)));
+
   test("f64maxint", primitive(Number.MAX_SAFE_INTEGER));
   test("f64minint", primitive(Number.MIN_SAFE_INTEGER));
 });

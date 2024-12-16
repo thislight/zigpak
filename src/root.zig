@@ -122,7 +122,7 @@ fn makeFixIntPos(value: u7) u8 {
 }
 
 fn makeFixIntNeg(value: i6) u8 {
-    return @intFromEnum(ContainerType.fixed_int_negative) | ~ContainerType.MASK_FIXED_INT_NEGATIVE & @as(u8, @intCast(@abs(value)));
+    return @intFromEnum(ContainerType.fixed_int_negative) | (~ContainerType.MASK_FIXED_INT_NEGATIVE & @as(u8, @intCast(@abs(value))));
 }
 
 /// Write integer `value` as specific type `T`, signed or unsigned.
