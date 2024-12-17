@@ -927,8 +927,9 @@ pub const Unpack = struct {
     }
 
     pub fn array(self: *Unpack, header: Header) ConvertError!UnpackArray {
-        if (header.type != .array or header.type != .fixarray) {
-            return ConvertError.InvalidValue;
+        switch (header.type) {
+            .fixarray, .array => {},
+            else => return ConvertError.InvalidValue,
         }
 
         return UnpackArray{
@@ -938,8 +939,9 @@ pub const Unpack = struct {
     }
 
     pub fn map(self: *Unpack, header: Header) ConvertError!UnpackMap {
-        if (header.type != .map or header.type != .fixmap) {
-            return ConvertError.InvalidValue;
+        switch (header.type) {
+            .fixmap, .map => {},
+            else => return ConvertError.InvalidValue,
         }
 
         return UnpackMap{
@@ -965,7 +967,7 @@ pub const UnpackArray = struct {
             return null;
         }
 
-        return self.unpack.peek() orelse PeekError.BufferEmpty;
+        return try self.unpack.peek();
     }
 
     pub fn next(self: *UnpackArray, headerType: HeaderType) Header {
@@ -976,7 +978,7 @@ pub const UnpackArray = struct {
 };
 
 pub const UnpackMap = struct {
-    unpack: *UnpackMap,
+    unpack: *Unpack,
     current: u32 = 0,
     len: u32,
     is_value: bool = false,
@@ -988,7 +990,7 @@ pub const UnpackMap = struct {
             return null;
         }
 
-        return self.unpack.peek() orelse PeekError.BufferEmpty;
+        return try self.unpack.peek();
     }
 
     pub fn next(self: *UnpackMap, headerType: HeaderType) Header {
