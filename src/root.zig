@@ -516,23 +516,28 @@ pub const HeaderType = union(enum) {
     map: u1,
 
     pub fn from(value: u8) ?HeaderType {
-        if (value & ContainerType.MASK_FIXED_INT_POSITIVE == @intFromEnum(ContainerType.fixed_int_positive)) {
-            return .{ .fixint = @intCast(value & ~ContainerType.MASK_FIXED_INT_POSITIVE) };
-        }
-        if (value & ContainerType.MASK_FIXED_INT_NEGATIVE == @intFromEnum(ContainerType.fixed_int_negative)) {
-            return .{ .fixint = -@as(i8, @intCast(value & ~ContainerType.MASK_FIXED_INT_NEGATIVE)) };
-        }
-        if (value & ContainerType.MASK_FIXED_STR == @intFromEnum(ContainerType.fixed_str)) {
-            return .{ .fixstr = value & ~ContainerType.MASK_FIXED_STR };
-        }
-        if (value & ContainerType.MASK_FIXED_ARRAY == @intFromEnum(ContainerType.fixed_array)) {
-            return .{ .fixarray = value & ~ContainerType.MASK_FIXED_ARRAY };
-        }
-        if (value & ContainerType.MASK_FIXED_MAP == @intFromEnum(ContainerType.fixed_map)) {
-            return .{ .fixmap = value & ~ContainerType.MASK_FIXED_MAP };
-        }
+        const MAX_FIXED_INT_NEG = ~ContainerType.MASK_FIXED_INT_NEGATIVE | @intFromEnum(ContainerType.fixed_int_negative);
+        const MAX_FIXED_INT_POS = ~ContainerType.MASK_FIXED_INT_POSITIVE | @intFromEnum(ContainerType.fixed_int_positive);
+        const MAX_FIXED_STR = ~ContainerType.MASK_FIXED_STR | @intFromEnum(ContainerType.fixed_str);
+        const MAX_FIXED_ARRAY = ~ContainerType.MASK_FIXED_ARRAY | @intFromEnum(ContainerType.fixed_array);
+        const MAX_FIXED_MAP = ~ContainerType.MASK_FIXED_MAP | @intFromEnum(ContainerType.fixed_map);
 
         return switch (value) {
+            @intFromEnum(ContainerType.fixed_int_positive)...MAX_FIXED_INT_POS => .{
+                .fixint = @intCast(value & ~ContainerType.MASK_FIXED_INT_POSITIVE),
+            },
+            @intFromEnum(ContainerType.fixed_int_negative)...MAX_FIXED_INT_NEG => .{
+                .fixint = -@as(i8, @intCast(value & ~ContainerType.MASK_FIXED_INT_NEGATIVE)),
+            },
+            @intFromEnum(ContainerType.fixed_str)...MAX_FIXED_STR => .{
+                .fixstr = value & ~ContainerType.MASK_FIXED_STR,
+            },
+            @intFromEnum(ContainerType.fixed_array)...MAX_FIXED_ARRAY => .{
+                .fixarray = value & ~ContainerType.MASK_FIXED_ARRAY,
+            },
+            @intFromEnum(ContainerType.fixed_map)...MAX_FIXED_MAP => .{
+                .fixmap = value & ~ContainerType.MASK_FIXED_MAP,
+            },
             @intFromEnum(ContainerType.nil) => .nil,
             @intFromEnum(ContainerType.bool_false), @intFromEnum(ContainerType.bool_true) => .{
                 .bool = (value - @intFromEnum(ContainerType.bool_false)) == 1,
