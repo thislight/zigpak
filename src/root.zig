@@ -845,10 +845,6 @@ pub const Unpack = struct {
     }
 
     inline fn rawUInt(self: *Unpack, header: Header) ConvertError!u64 {
-        if (header.type != .uint) {
-            return ConvertError.InvalidValue;
-        }
-
         defer self.rest = self.rest[header.size..];
         return switch (header.size) {
             1 => readIntBig(u8, self.rest[0..1]),
@@ -860,10 +856,6 @@ pub const Unpack = struct {
     }
 
     inline fn rawInt(self: *Unpack, header: Header) ConvertError!i64 {
-        if (header.type != .int) {
-            return ConvertError.InvalidValue;
-        }
-
         defer self.rest = self.rest[header.size..];
         return switch (header.size) {
             1 => readIntBig(i8, self.rest[0..1]),
@@ -896,9 +888,6 @@ pub const Unpack = struct {
     }
 
     inline fn rawFloat(self: *Unpack, header: Header) ConvertError!f64 {
-        if (header.type != .float) {
-            return ConvertError.InvalidValue;
-        }
         const value: f64 = switch (header.size) {
             4 => compatstd.mem.readFloatBig(f32, self.rest[0..4]),
             8 => compatstd.mem.readFloatBig(f64, self.rest[0..8]),
@@ -931,26 +920,22 @@ pub const Unpack = struct {
     }
 
     pub fn array(self: *Unpack, header: Header) ConvertError!UnpackArray {
-        switch (header.type) {
-            .fixarray, .array => {},
+        return switch (header.type) {
+            .fixarray, .array => UnpackArray{
+                .unpack = self,
+                .len = header.size,
+            },
             else => return ConvertError.InvalidValue,
-        }
-
-        return UnpackArray{
-            .unpack = self,
-            .len = header.size,
         };
     }
 
     pub fn map(self: *Unpack, header: Header) ConvertError!UnpackMap {
-        switch (header.type) {
-            .fixmap, .map => {},
+        return switch (header.type) {
+            .fixmap, .map => UnpackMap{
+                .unpack = self,
+                .len = header.size,
+            },
             else => return ConvertError.InvalidValue,
-        }
-
-        return UnpackMap{
-            .unpack = self,
-            .len = header.size,
         };
     }
 };
