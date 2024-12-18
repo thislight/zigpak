@@ -193,8 +193,8 @@ pub const UnpackReader = struct {
 
     pub const ConvertError = fmt.Unpack.ConvertError;
 
-    pub fn nil(self: *UnpackReader, _: anytype, header: fmt.Header) !@TypeOf(null) {
-        return self.unpack.nil(header);
+    pub fn nil(self: *UnpackReader, _: anytype, T: type, header: fmt.Header) !T {
+        return self.unpack.nil(T, header);
     }
 
     pub fn @"bool"(self: *UnpackReader, _: anytype, header: fmt.Header) !bool {

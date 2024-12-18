@@ -826,9 +826,8 @@ pub const Unpack = struct {
 
     /// Consumes the current value as the null.
     ///
-    /// Note that the result must be peer resolved to a type
-    /// with valid representation, like `?*opaque {}`.
-    pub fn nil(_: *Unpack, header: Header) ConvertError!@TypeOf(null) {
+    /// The `T` must be optional types.
+    pub fn nil(_: *Unpack, T: type, header: Header) ConvertError!T {
         if (header.type == .nil) {
             return null;
         }

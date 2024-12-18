@@ -10,7 +10,10 @@ fn rewriteValue(
     h: zigpak.Header,
 ) !void {
     switch (h.type.family()) {
-        .nil => _ = try zigpak.io.writeNil(writer),
+        .nil => {
+            _ = try values.nil(reader, ?*anyopaque, h);
+            _ = try zigpak.io.writeNil(writer);
+        },
         .bool => _ = try zigpak.io.writeBool(writer, try values.bool(reader, h)),
         .int => _ = try zigpak.io.writeIntSm(writer, try values.int(reader, i64, h)),
         .uint => _ = try zigpak.io.writeIntSm(writer, try values.int(reader, u64, h)),
