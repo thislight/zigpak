@@ -814,11 +814,6 @@ pub const Unpack = struct {
     pub fn next(self: *Unpack, headerType: HeaderType) Header {
         const header, const consumes = Header.from(headerType, self.rest[1..]);
         self.rest = self.rest[1 + consumes ..];
-        // std.debug.print("Unpack.next headerType = {}, comsumes = {}, header = {}\n", .{
-        //     headerType,
-        //     consumes,
-        //     header,
-        // });
         return header;
     }
 
@@ -881,10 +876,15 @@ pub const Unpack = struct {
 
     /// Consume the current value as the raw, as long as they
     /// have the size.
-    pub fn raw(self: *Unpack, header: Header) []const u8 {
-        const result = self.rest[0..header.size];
-        self.rest = self.rest[header.size..];
-        return result;
+    pub fn raw(self: *Unpack, header: Header) ConvertError![]const u8 {
+        switch (header.type) {
+            .array, .fixarray, .map, .fixmap => return ConvertError.InvalidValue,
+            else => {
+                const result = self.rest[0..header.size];
+                self.rest = self.rest[header.size..];
+                return result;
+            },
+        }
     }
 
     inline fn rawFloat(self: *Unpack, header: Header) ConvertError!f64 {
