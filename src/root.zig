@@ -93,6 +93,7 @@
 //!
 
 pub const io = @import("./io.zig");
+const budopts = @import("budopts");
 
 test {
     _ = io;
@@ -496,6 +497,12 @@ pub const ContainerType = enum(u8) {
     ext_fixed4 = 0xd6,
     ext_fixed8 = 0xd7,
     ext_fixed16 = 0xd8,
+
+    /// The smallest not-fixed type.
+    const MIN = ContainerType.nil;
+
+    /// The biggest not-fixed type.
+    const MAX = ContainerType.map32;
 };
 
 pub const HeaderType = union(enum) {
@@ -515,13 +522,41 @@ pub const HeaderType = union(enum) {
     fixmap: u8,
     map: u1,
 
-    pub fn from(value: u8) ?HeaderType {
-        const MAX_FIXED_INT_NEG = ~ContainerType.MASK_FIXED_INT_NEGATIVE | @intFromEnum(ContainerType.fixed_int_negative);
-        const MAX_FIXED_INT_POS = ~ContainerType.MASK_FIXED_INT_POSITIVE | @intFromEnum(ContainerType.fixed_int_positive);
-        const MAX_FIXED_STR = ~ContainerType.MASK_FIXED_STR | @intFromEnum(ContainerType.fixed_str);
-        const MAX_FIXED_ARRAY = ~ContainerType.MASK_FIXED_ARRAY | @intFromEnum(ContainerType.fixed_array);
-        const MAX_FIXED_MAP = ~ContainerType.MASK_FIXED_MAP | @intFromEnum(ContainerType.fixed_map);
+    fn tableLen(comptime includeFixed: bool) usize {
+        const TMAX = @intFromEnum(ContainerType.MAX);
+        const TMIN = @intFromEnum(ContainerType.MIN);
+        return if (includeFixed) maxInt(u8) + 1 else (TMAX - TMIN + 1);
+    }
 
+    /// Make the lookup table.
+    ///
+    /// If fixeds are not included, the type number offset is `@intFromEnum(Container.MIN)`.
+    /// If fixed are included, the offset is `0`.
+    fn makeTable(comptime includeFixed: bool) [tableLen(includeFixed)]?HeaderType {
+        const TMAX = @intFromEnum(ContainerType.MAX);
+        const TMIN = @intFromEnum(ContainerType.MIN);
+        const bufferSize = if (includeFixed) maxInt(u8) + 1 else (TMAX - TMIN + 1);
+        comptime var buffer = [_]?HeaderType{null} ** bufferSize;
+
+        if (includeFixed) {
+            for (0..maxInt(u8) + 1) |i| {
+                buffer[i] = HeaderType.parse(i);
+            }
+        } else {
+            for (TMIN..TMAX + 1) |i| {
+                buffer[i - TMIN] = HeaderType.parse(i);
+            }
+        }
+        return buffer;
+    }
+
+    const MAX_FIXED_INT_NEG = ~ContainerType.MASK_FIXED_INT_NEGATIVE | @intFromEnum(ContainerType.fixed_int_negative);
+    const MAX_FIXED_INT_POS = ~ContainerType.MASK_FIXED_INT_POSITIVE | @intFromEnum(ContainerType.fixed_int_positive);
+    const MAX_FIXED_STR = ~ContainerType.MASK_FIXED_STR | @intFromEnum(ContainerType.fixed_str);
+    const MAX_FIXED_ARRAY = ~ContainerType.MASK_FIXED_ARRAY | @intFromEnum(ContainerType.fixed_array);
+    const MAX_FIXED_MAP = ~ContainerType.MASK_FIXED_MAP | @intFromEnum(ContainerType.fixed_map);
+
+    inline fn parse(value: u8) ?HeaderType {
         return switch (value) {
             @intFromEnum(ContainerType.fixed_int_positive)...MAX_FIXED_INT_POS => .{
                 .fixint = @intCast(value & ~ContainerType.MASK_FIXED_INT_POSITIVE),
@@ -571,6 +606,90 @@ pub const HeaderType = union(enum) {
             },
             else => null,
         };
+    }
+
+    /// small lookup table. 32 items (~64 bytes).
+    const TAB_SMALL = makeTable(false);
+
+    inline fn lookupSmall(value: u8) ?HeaderType {
+        if (value >= @intFromEnum(ContainerType.MIN) and value <= @intFromEnum(ContainerType.MAX)) {
+            const idx = value - @intFromEnum(ContainerType.MIN);
+            return TAB_SMALL[idx];
+        } else {
+            const V = @Vector(5, u8);
+            const v: V = @splat(value);
+            const MASKS: @Vector(5, u8) = .{
+                ContainerType.MASK_FIXED_INT_POSITIVE,
+                ContainerType.MASK_FIXED_INT_NEGATIVE,
+                ContainerType.MASK_FIXED_STR,
+                ContainerType.MASK_FIXED_ARRAY,
+                ContainerType.MASK_FIXED_MAP,
+            };
+            const CHECKS: V = .{
+                @intFromEnum(ContainerType.fixed_int_positive),
+                @intFromEnum(ContainerType.fixed_int_negative),
+                @intFromEnum(ContainerType.fixed_str),
+                @intFromEnum(ContainerType.fixed_array),
+                @intFromEnum(ContainerType.fixed_map),
+            };
+            const check = (v & MASKS) == CHECKS;
+            inline for (0..5) |i| {
+                if (check[i]) {
+                    const val = value & ~MASKS[i];
+                    return switch (i) {
+                        0 => .{ .fixint = @intCast(val) },
+                        1 => .{ .fixint = -@as(i8, @intCast(val)) },
+                        2 => .{ .fixstr = val },
+                        3 => .{ .fixarray = val },
+                        4 => .{ .fixmap = val },
+                        else => unreachable,
+                    };
+                }
+            }
+            return null;
+
+            // return switch (value) {
+            //     @intFromEnum(ContainerType.fixed_int_positive)...MAX_FIXED_INT_POS => .{
+            //         .fixint = @intCast(value & ~ContainerType.MASK_FIXED_INT_POSITIVE),
+            //     },
+            //     @intFromEnum(ContainerType.fixed_int_negative)...MAX_FIXED_INT_NEG => .{
+            //         .fixint = -@as(i8, @intCast(value & ~ContainerType.MASK_FIXED_INT_NEGATIVE)),
+            //     },
+            //     @intFromEnum(ContainerType.fixed_str)...MAX_FIXED_STR => .{
+            //         .fixstr = value & ~ContainerType.MASK_FIXED_STR,
+            //     },
+            //     @intFromEnum(ContainerType.fixed_array)...MAX_FIXED_ARRAY => .{
+            //         .fixarray = value & ~ContainerType.MASK_FIXED_ARRAY,
+            //     },
+            //     @intFromEnum(ContainerType.fixed_map)...MAX_FIXED_MAP => .{
+            //         .fixmap = value & ~ContainerType.MASK_FIXED_MAP,
+            //     },
+            //     else => null,
+            // };
+        }
+    }
+
+    /// big lookup table. 256 items (~512 bytes).
+    const TAB_ALL = makeTable(true);
+
+    inline fn lookupAll(value: u8) ?HeaderType {
+        @setRuntimeSafety(false); // the table already has all possibilities
+        return TAB_ALL[value];
+    }
+
+    /// Convert a value to `HeaderType`.
+    pub fn from(value: u8) ?HeaderType {
+        switch (budopts.lookupTable) {
+            .all => {
+                return lookupAll(value);
+            },
+            .small => {
+                return lookupSmall(value);
+            },
+            .none => {
+                return parse(value);
+            },
+        }
     }
 
     pub fn nextComponentSize(self: @This()) usize {
@@ -809,7 +928,7 @@ pub const Unpack = struct {
     /// this is also the number of bytes of container types.
     ///
     /// Calling this function, you must confirm the buffer has enough data to
-    /// read. Use `HeaderType.nextComponentSize()` to get the expected size for
+    /// read. Use `HeaderType.nextComponentSize` to get the expected size for
     /// the value header.
     pub fn next(self: *Unpack, headerType: HeaderType) Header {
         const header, const consumes = Header.from(headerType, self.rest[1..]);
@@ -821,7 +940,7 @@ pub const Unpack = struct {
 
     /// Consumes the current value as the null.
     ///
-    /// The `T` must be optional types.
+    /// The `T` must be an optional type.
     pub fn nil(_: *Unpack, T: type, header: Header) ConvertError!T {
         if (header.type == .nil) {
             return null;
