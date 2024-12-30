@@ -314,6 +314,7 @@ pub const PREFIX_BUFSIZE = 6;
 /// The prefix for a value.
 /// This is the header to be stored before the actual content.
 pub const Prefix = std.BoundedArray(u8, PREFIX_BUFSIZE);
+// TODO: further optimize appendAssumeCapacity - optimizer does not inline the call
 
 /// Generate a string prefix.
 pub inline fn prefixString(len: u32) Prefix {
@@ -324,11 +325,11 @@ pub inline fn prefixString(len: u32) Prefix {
         },
         0b00011111 + 1...maxInt(u8) => {
             result.appendAssumeCapacity(0xd9);
-            result.appendAssumeCapacity(@intCast(len));
+            result.appendAssumeCapacity(@truncate(len));
         },
         maxInt(u8) + 1...maxInt(u16) => {
             result.appendAssumeCapacity(0xda);
-            result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
             result.appendAssumeCapacity(0xdb);
@@ -345,12 +346,12 @@ pub inline fn prefixBinary(len: u32) Prefix {
         0...maxInt(u8) => {
             result.appendSliceAssumeCapacity(&.{
                 @intFromEnum(ContainerType.bin8),
-                @as(u8, @intCast(len)),
+                @as(u8, @truncate(len)),
             });
         },
         maxInt(u8) + 1...maxInt(u16) => {
             result.appendAssumeCapacity(@intFromEnum(ContainerType.bin16));
-            result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
             result.appendAssumeCapacity(@intFromEnum(ContainerType.bin32));
@@ -365,11 +366,11 @@ pub inline fn prefixArray(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            result.appendAssumeCapacity(0b10010000 | (0b00001111 & @as(u8, @intCast(len))));
+            result.appendAssumeCapacity(0b10010000 | (0b00001111 & @as(u8, @truncate(len))));
         },
         (0b00001111 + 1)...maxInt(u16) => {
             result.appendAssumeCapacity(0xdc);
-            result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
             result.appendAssumeCapacity(0xdd);
@@ -388,11 +389,11 @@ pub inline fn prefixMap(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            result.appendAssumeCapacity(0b10000000 | (0b00001111 & @as(u8, @intCast(len))));
+            result.appendAssumeCapacity(0b10000000 | (0b00001111 & @as(u8, @truncate(len))));
         },
         (0b00001111 + 1)...maxInt(u16) => {
             result.appendAssumeCapacity(0xde);
-            result.writer().writeInt(u16, @intCast(len), .big) catch unreachable;
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
             result.appendAssumeCapacity(0xdf);
@@ -412,17 +413,17 @@ pub inline fn prefixExt(len: u32, extype: i8) Prefix {
             writer.writeInt(i8, extype, .big) catch unreachable;
         },
         0...maxInt(u8) => {
-            result.appendSliceAssumeCapacity(&.{ 0xc7, @intCast(len) });
+            result.appendSliceAssumeCapacity(&.{ 0xc7, @truncate(len) });
             writer.writeInt(i8, extype, .big) catch unreachable;
         },
         maxInt(u8) + 1...maxInt(u16) => {
             result.appendAssumeCapacity(0xc8);
-            writer.writeInt(u16, @intCast(len), .big);
+            writer.writeInt(u16, @truncate(len), .big);
             writer.writeInt(i8, extype, .big);
         },
         maxInt(u16) + 1...maxInt(u32) => {
             result.appendAssumeCapacity(0xc9);
-            writer.writeInt(u32, @intCast(len), .big);
+            writer.writeInt(u32, @truncate(len), .big);
             writer.writeInt(i8, extype, .big);
         },
     }
@@ -693,6 +694,7 @@ pub const HeaderType = union(enum) {
     }
 
     pub fn nextComponentSize(self: @This()) usize {
+        // TODO: Needs lookup table
         return switch (self) {
             .nil, .bool, .fixint, .fixarray, .fixmap => 0,
             .bin, .str => |n| switch (n) {
