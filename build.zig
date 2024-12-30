@@ -1,6 +1,7 @@
 // SPDX: Apache-2.0
 // This file is part of zigpak.
 const std = @import("std");
+const budopts = @import("./src/budopts.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -25,15 +26,30 @@ pub fn build(b: *std.Build) void {
 
     const kcov = b.option([]const []const u8, "kcov", "Arguments for kcov in testing (default: null = disabled)");
 
+    const lookupTableOptimize: budopts.LookupTableOptimize = b.option(
+        budopts.LookupTableOptimize,
+        "lookup-table",
+        "Lookup table optimization (default: all; small under ReleaseSmall)",
+    ) orelse switch (optimize) {
+        .ReleaseSmall => .small,
+        else => .all,
+    };
+
+    const instRewriter = b.option(bool, "install-rewriter", "Install rewriter (default: false)") orelse false;
+
     const stepCheck = b.step("check", "Build but don't install");
     const stepTest = b.step("test", "Run library tests");
     const stepCompatTest = b.step("test-compat", "Run compatibility tests");
+
+    const bopts = b.addOptions();
+    bopts.addOption(budopts.LookupTableOptimize, "lookupTable", lookupTableOptimize);
 
     const core = b.addModule("zigpak", .{
         .root_source_file = b.path("src/root.zig"),
         .optimize = optimize,
         .target = target,
     });
+    core.addOptions("budopts", bopts);
 
     { // Docs for the module
         const docs = b.addStaticLibrary(.{
@@ -118,6 +134,10 @@ pub fn build(b: *std.Build) void {
             const runCompatTest = b.addSystemCommand(&.{ "bun", "exec", COMPAT_RUN_CMD });
             runCompatTest.addArtifactArg(rewriter);
             stepCompatTest.dependOn(&runCompatTest.step);
+        }
+
+        if (instRewriter) {
+            b.installArtifact(rewriter);
         }
     }
 
