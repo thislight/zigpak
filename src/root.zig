@@ -93,7 +93,9 @@
 //!
 
 pub const io = @import("./io.zig");
-const budopts = @import("budopts");
+pub const LookupTableOptimize = @import("./budopts.zig").LookupTableOptimize;
+
+pub const lookupTableMode: LookupTableOptimize = @enumFromInt(@intFromEnum(@import("budopts").lookupTable));
 
 test {
     _ = io;
@@ -680,7 +682,7 @@ pub const HeaderType = union(enum) {
 
     /// Convert a value to `HeaderType`.
     pub fn from(value: u8) ?HeaderType {
-        switch (budopts.lookupTable) {
+        switch (lookupTableMode) {
             .all => {
                 return lookupAll(value);
             },
@@ -693,8 +695,27 @@ pub const HeaderType = union(enum) {
         }
     }
 
-    pub fn nextComponentSize(self: @This()) usize {
-        // TODO: Needs lookup table
+    /// Look up next component size for the .small level.
+    ///
+    /// This function accepts bin64/str64/ext64, which are invalid in the spec.
+    inline fn lookupNextComponentSize(self: HeaderType) usize {
+        const REGULAR = [_]usize{ 1, 2, 4, 8 };
+        const FLOAT = [_]usize{ 4, 8 };
+        const ARRAY = [_]usize{ 2, 4 };
+
+        return switch (self) {
+            .nil, .bool, .fixint, .fixarray, .fixmap => 0,
+            .bin, .str => |n| REGULAR[n],
+            .fixstr => |n| n,
+            .fixext => |n| 1 + n,
+            .ext => |n| 1 + REGULAR[n],
+            .int, .uint => |n| REGULAR[n],
+            .float => |n| FLOAT[n],
+            .array, .map => |n| ARRAY[n],
+        };
+    }
+
+    inline fn findNextComponentSize(self: HeaderType) usize {
         return switch (self) {
             .nil, .bool, .fixint, .fixarray, .fixmap => 0,
             .bin, .str => |n| switch (n) {
@@ -726,6 +747,26 @@ pub const HeaderType = union(enum) {
                 1 => 4,
             },
         };
+    }
+
+    /// Return the next component size of the value.
+    ///
+    /// ```
+    /// | HeaderType | header data | payload |
+    /// ```
+    ///
+    /// - For fixed-number types, return the payload size.
+    /// - For fixed array and maps, return 0.
+    /// - For the other types, return the header data size.
+    pub fn nextComponentSize(self: HeaderType) usize {
+        switch (lookupTableMode) {
+            .all, .small => {
+                return lookupNextComponentSize(self);
+            },
+            .none => {
+                return findNextComponentSize(self);
+            },
+        }
     }
 
     pub fn family(self: HeaderType) ValueTypeFamily {
