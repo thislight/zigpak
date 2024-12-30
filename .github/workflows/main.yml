@@ -18,6 +18,10 @@ jobs:
           - ReleaseSafe
           - ReleaseFast
           - ReleaseSmall
+        lookupTable:
+          - none
+          - small
+          - all
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
@@ -32,4 +36,4 @@ jobs:
       - name: Install Test Dependencies
         run: bun i
       - name: Run Compatibility Test
-        run: zig build test-compat -Doptimize=${{ matrix.optimize }}
+        run: zig build test-compat -Doptimize=${{ matrix.optimize }} -Dlookup-table=${{ matrix.lookupTable }}
