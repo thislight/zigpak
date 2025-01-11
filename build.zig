@@ -29,11 +29,8 @@ pub fn build(b: *std.Build) void {
     const lookupTableOptimize: budopts.LookupTableOptimize = b.option(
         budopts.LookupTableOptimize,
         "lookup-table",
-        "Lookup table optimization (default: all; small under ReleaseSmall)",
-    ) orelse switch (optimize) {
-        .ReleaseSmall => .small,
-        else => .all,
-    };
+        "Lookup table optimization (default: none)",
+    ) orelse .none;
 
     const instRewriter = b.option(bool, "install-rewriter", "Install rewriter (default: false)") orelse false;
 

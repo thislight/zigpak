@@ -9,9 +9,9 @@
 pub const LookupTableOptimize = enum {
     /// Don't use lookup table if possible.
     ///
-    /// This option emits smallest object.
+    /// This option is recommended for all modern targets.
     none,
-    /// Use small lookup tables (<= 64 bytes each, assume usize is 8 bytes).
+    /// Use small lookup tables (<= 64 bytes for each function, assume usize is 8 bytes).
     ///
     /// This may boost performance for certain
     /// platforms.
