@@ -721,43 +721,51 @@ pub const HeaderType = union(enum) {
         return self.countData() + 1;
     }
 
-    pub const PayloadSizeInfo = struct {
+    pub const PayloadSizeInfo = union {
+        /// The size is known.
         known: u8,
-        is_variable: bool,
+        /// The value has variable size.
+        variable: void,
 
-        fn init(size: u8, varsized: bool) PayloadSizeInfo {
-            return .{ .known = size, .is_variable = varsized };
-        }
-
-        fn chooseReadSize(self: PayloadSizeInfo, varDefault: usize) usize {
-            if (self.known > 0) {
-                return self.known;
-            } else if (self.is_variable) {
-                return varDefault;
-            } else {
-                return 0;
-            }
+        fn sized(size: u8) PayloadSizeInfo {
+            return .{ .known = size };
         }
     };
 
-    pub fn payloadSize(self: HeaderType) PayloadSizeInfo {
+    /// Return the payload size info.
+    ///
+    /// Size for (fix)array, (fix)map, bin, str, ext are always variable.
+    /// Bin, str, ext have not determined byte size at this stage.
+    /// Their byte size is available in the `Header`.
+    pub fn countPayload(self: HeaderType) PayloadSizeInfo {
         return switch (self) {
-            .nil, .bool, .fixint => PayloadSizeInfo.init(0, false),
-            .fixstr => |n| PayloadSizeInfo.init(n, false),
-            .uint, .int => |n| PayloadSizeInfo.init(switch (n) {
+            .nil, .bool, .fixint => PayloadSizeInfo.sized(0),
+            .fixstr => |n| PayloadSizeInfo.sized(n),
+            .uint, .int => |n| PayloadSizeInfo.sized(switch (n) {
                 0 => 1,
                 1 => 2,
                 2 => 4,
                 3 => 8,
-            }, false),
-            .float => |n| PayloadSizeInfo.init(switch (n) {
+            }),
+            .float => |n| PayloadSizeInfo.sized(switch (n) {
                 0 => 4,
                 1 => 8,
-            }, false),
-            .bin, .str, .ext => PayloadSizeInfo.init(0, true),
-            .fixext => |n| PayloadSizeInfo.init(n, false),
-            .fixarray, .fixmap, .array, .map => PayloadSizeInfo.init(0, true),
+            }),
+            .fixext => |n| PayloadSizeInfo.sized(n),
+            .fixarray, .fixmap, .array, .map, .bin, .str, .ext => .variable,
         };
+    }
+
+    /// Return the size for fetching the rest of the value.
+    /// The header type itself (1 byte) is not included.
+    ///
+    /// If the header type has unknown byte size, the result
+    /// is the size of the header data.
+    pub fn countForFetch(self: HeaderType) usize {
+        return self.countData() + (switch (self.countPayload()) {
+            .variable => 0,
+            .known => |sz| sz,
+        });
     }
 };
 

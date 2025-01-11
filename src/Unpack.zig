@@ -7,7 +7,7 @@
 //!
 //! - `Unpack.peek` begins the unpack process for a value.
 //!   - The function returns a `HeaderType`.
-//!   - Use `HeaderType.countData` to get the required data size
+//!   - Use `HeaderType.count` or `HeaderType.countForFetch` to get the required data size
 //!     for the header.
 //! - Ensured the `Unpack.rest` have enough data, use `Unpack.next` move to
 //!  the next value and extract the header.
@@ -35,7 +35,7 @@
 //! const unpack: Unpack = Unpack.init(data);
 //!
 //! if (unpack.peek()) |peek| {
-//!     const requiredSize = peek.count();
+//!     const requiredSize = peek.countForFetch();
 //!     if (requiredSize > unpack.rest.len) {
 //!         const ndata = readMore(data);
 //!         unpack.setAppend(data.len, ndata);
