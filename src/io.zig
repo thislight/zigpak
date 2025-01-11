@@ -148,15 +148,10 @@ pub const UnpackReader = struct {
 
     /// Peek the next value's type
     fn peek(self: *UnpackReader, reader: anytype) !fmt.HeaderType {
-        while (true) {
-            return self.unpack.peek() catch |err| switch (err) {
-                error.BufferEmpty => {
-                    try self.readMore(reader);
-                    continue;
-                },
-                else => err,
-            };
+        while (self.unpack.rest.len == 0) {
+            try self.readMore(reader);
         }
+        return try self.unpack.peek();
     }
 
     fn resetUnreadToStart(self: *UnpackReader) usize {

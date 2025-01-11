@@ -75,15 +75,14 @@ pub fn setAppend(self: *Unpack, olen: usize, new: []const u8) void {
 }
 
 pub const PeekError = error{
-    BufferEmpty,
+    /// The type could not be recongized.
     UnrecognizedType,
 };
 
+/// Peek the next value.
+///
+/// The inner buffer must have at least 1 byte.
 pub fn peek(self: *const Unpack) PeekError!HeaderType {
-    if (self.rest.len == 0) {
-        return PeekError.BufferEmpty;
-    }
-
     return HeaderType.from(self.rest[0]) orelse PeekError.UnrecognizedType;
 }
 
