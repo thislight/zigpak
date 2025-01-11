@@ -7,7 +7,7 @@
 //!
 //! - `Unpack.peek` begins the unpack process for a value.
 //!   - The function returns a `HeaderType`.
-//!   - Use `HeaderType.nextComponentSize` to get the required data size
+//!   - Use `HeaderType.countData` to get the required data size
 //!     for the header.
 //! - Ensured the `Unpack.rest` have enough data, use `Unpack.next` move to
 //!  the next value and extract the header.
@@ -35,7 +35,7 @@
 //! const unpack: Unpack = Unpack.init(data);
 //!
 //! if (unpack.peek()) |peek| {
-//!     const requiredSize = peek.nextComponentSize();
+//!     const requiredSize = peek.count();
 //!     if (requiredSize > unpack.rest.len) {
 //!         const ndata = readMore(data);
 //!         unpack.setAppend(data.len, ndata);
@@ -96,11 +96,11 @@ pub fn peek(self: *const Unpack) PeekError!HeaderType {
 /// this is also the number of bytes of container types.
 ///
 /// Calling this function, you must confirm the buffer has enough data to
-/// read. Use `HeaderType.nextComponentSize` to get the expected size for
+/// read. Use `HeaderType.count` to get the expected size for
 /// the value header.
 pub fn next(self: *Unpack, headerType: HeaderType) Header {
-    const header, const consumes = Header.from(headerType, self.rest[1..]);
-    self.rest = self.rest[1 + consumes ..];
+    const header = Header.from(headerType, self.rest[1..]);
+    self.rest = self.rest[headerType.count()..];
     return header;
 }
 

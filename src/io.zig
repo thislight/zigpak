@@ -172,7 +172,7 @@ pub const UnpackReader = struct {
     /// Return `error.EndOfStream` if the stream is ended.
     pub fn next(self: *UnpackReader, reader: anytype) !fmt.Header {
         const htyp = try self.peek(reader);
-        if (htyp.nextComponentSize() > self.unpack.rest.len) {
+        if (htyp.count() > self.unpack.rest.len) {
             try self.readMore(reader);
         }
         return self.unpack.next(htyp);

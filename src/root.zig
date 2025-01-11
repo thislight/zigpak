@@ -582,34 +582,34 @@ pub const HeaderType = union(enum) {
             },
             @intFromEnum(ContainerType.nil) => .nil,
             @intFromEnum(ContainerType.bool_false), @intFromEnum(ContainerType.bool_true) => .{
-                .bool = (value - @intFromEnum(ContainerType.bool_false)) == 1,
+                .bool = value == @intFromEnum(ContainerType.bool_true),
             },
             @intFromEnum(ContainerType.bin8)...@intFromEnum(ContainerType.bin32) => .{
-                .bin = @intCast(value - @intFromEnum(ContainerType.bin8)),
+                .bin = @truncate(value - @intFromEnum(ContainerType.bin8)),
             },
             @intFromEnum(ContainerType.str8)...@intFromEnum(ContainerType.str32) => .{
-                .str = @intCast(value - @intFromEnum(ContainerType.str8)),
+                .str = @truncate(value - @intFromEnum(ContainerType.str8)),
             },
             @intFromEnum(ContainerType.uint8)...@intFromEnum(ContainerType.uint64) => .{
-                .uint = @intCast(value - @intFromEnum(ContainerType.uint8)),
+                .uint = @truncate(value - @intFromEnum(ContainerType.uint8)),
             },
             @intFromEnum(ContainerType.int8)...@intFromEnum(ContainerType.int64) => .{
-                .int = @intCast(value - @intFromEnum(ContainerType.int8)),
+                .int = @truncate(value - @intFromEnum(ContainerType.int8)),
             },
             @intFromEnum(ContainerType.float32)...@intFromEnum(ContainerType.float64) => .{
-                .float = @intCast(value - @intFromEnum(ContainerType.float32)),
+                .float = @truncate(value - @intFromEnum(ContainerType.float32)),
             },
             @intFromEnum(ContainerType.array16)...@intFromEnum(ContainerType.array32) => .{
-                .array = @intCast(value - @intFromEnum(ContainerType.array16)),
+                .array = @truncate(value - @intFromEnum(ContainerType.array16)),
             },
             @intFromEnum(ContainerType.map16)...@intFromEnum(ContainerType.map32) => .{
-                .map = @intCast(value - @intFromEnum(ContainerType.map16)),
+                .map = @truncate(value - @intFromEnum(ContainerType.map16)),
             },
             @intFromEnum(ContainerType.ext_fixed1)...@intFromEnum(ContainerType.ext_fixed16) => .{
-                .fixext = @intCast(value - @intFromEnum(ContainerType.ext_fixed1)),
+                .fixext = @truncate(value - @intFromEnum(ContainerType.ext_fixed1)),
             },
             @intFromEnum(ContainerType.ext8)...@intFromEnum(ContainerType.ext32) => .{
-                .ext = @intCast(value - @intFromEnum(ContainerType.ext8)),
+                .ext = @truncate(value - @intFromEnum(ContainerType.ext8)),
             },
             else => null,
         };
@@ -619,61 +619,26 @@ pub const HeaderType = union(enum) {
     const TAB_SMALL = makeTable(false);
 
     inline fn lookupSmall(value: u8) ?HeaderType {
-        if (value >= @intFromEnum(ContainerType.MIN) and value <= @intFromEnum(ContainerType.MAX)) {
-            const idx = value - @intFromEnum(ContainerType.MIN);
-            return TAB_SMALL[idx];
-        } else {
-            const V = @Vector(5, u8);
-            const v: V = @splat(value);
-            const MASKS: @Vector(5, u8) = .{
-                ContainerType.MASK_FIXED_INT_POSITIVE,
-                ContainerType.MASK_FIXED_INT_NEGATIVE,
-                ContainerType.MASK_FIXED_STR,
-                ContainerType.MASK_FIXED_ARRAY,
-                ContainerType.MASK_FIXED_MAP,
-            };
-            const CHECKS: V = .{
-                @intFromEnum(ContainerType.fixed_int_positive),
-                @intFromEnum(ContainerType.fixed_int_negative),
-                @intFromEnum(ContainerType.fixed_str),
-                @intFromEnum(ContainerType.fixed_array),
-                @intFromEnum(ContainerType.fixed_map),
-            };
-            const check = (v & MASKS) == CHECKS;
-            inline for (0..5) |i| {
-                if (check[i]) {
-                    const val = value & ~MASKS[i];
-                    return switch (i) {
-                        0 => .{ .fixint = @intCast(val) },
-                        1 => .{ .fixint = -@as(i8, @intCast(val)) },
-                        2 => .{ .fixstr = val },
-                        3 => .{ .fixarray = val },
-                        4 => .{ .fixmap = val },
-                        else => unreachable,
-                    };
-                }
-            }
-            return null;
+        @setRuntimeSafety(false);
 
-            // return switch (value) {
-            //     @intFromEnum(ContainerType.fixed_int_positive)...MAX_FIXED_INT_POS => .{
-            //         .fixint = @intCast(value & ~ContainerType.MASK_FIXED_INT_POSITIVE),
-            //     },
-            //     @intFromEnum(ContainerType.fixed_int_negative)...MAX_FIXED_INT_NEG => .{
-            //         .fixint = -@as(i8, @intCast(value & ~ContainerType.MASK_FIXED_INT_NEGATIVE)),
-            //     },
-            //     @intFromEnum(ContainerType.fixed_str)...MAX_FIXED_STR => .{
-            //         .fixstr = value & ~ContainerType.MASK_FIXED_STR,
-            //     },
-            //     @intFromEnum(ContainerType.fixed_array)...MAX_FIXED_ARRAY => .{
-            //         .fixarray = value & ~ContainerType.MASK_FIXED_ARRAY,
-            //     },
-            //     @intFromEnum(ContainerType.fixed_map)...MAX_FIXED_MAP => .{
-            //         .fixmap = value & ~ContainerType.MASK_FIXED_MAP,
-            //     },
-            //     else => null,
-            // };
-        }
+        return switch (value) {
+            @intFromEnum(ContainerType.fixed_int_positive)...MAX_FIXED_INT_POS => .{
+                .fixint = @intCast(value & ~ContainerType.MASK_FIXED_INT_POSITIVE),
+            },
+            @intFromEnum(ContainerType.fixed_int_negative)...MAX_FIXED_INT_NEG => .{
+                .fixint = -@as(i8, @intCast(value & ~ContainerType.MASK_FIXED_INT_NEGATIVE)),
+            },
+            @intFromEnum(ContainerType.fixed_str)...MAX_FIXED_STR => .{
+                .fixstr = value & ~ContainerType.MASK_FIXED_STR,
+            },
+            @intFromEnum(ContainerType.fixed_array)...MAX_FIXED_ARRAY => .{
+                .fixarray = value & ~ContainerType.MASK_FIXED_ARRAY,
+            },
+            @intFromEnum(ContainerType.fixed_map)...MAX_FIXED_MAP => .{
+                .fixmap = value & ~ContainerType.MASK_FIXED_MAP,
+            },
+            @intFromEnum(ContainerType.MIN)...@intFromEnum(ContainerType.MAX) => TAB_SMALL[value - @intFromEnum(ContainerType.MIN)],
+        };
     }
 
     /// big lookup table. 256 items (~512 bytes).
@@ -699,80 +664,6 @@ pub const HeaderType = union(enum) {
         }
     }
 
-    /// Look up next component size for the .small level.
-    ///
-    /// This function accepts bin64/str64/ext64, which are invalid in the spec.
-    inline fn lookupNextComponentSize(self: HeaderType) usize {
-        const REGULAR = [_]usize{ 1, 2, 4, 8 };
-        const FLOAT = [_]usize{ 4, 8 };
-        const ARRAY = [_]usize{ 2, 4 };
-
-        return switch (self) {
-            .nil, .bool, .fixint, .fixarray, .fixmap => 0,
-            .bin, .str => |n| REGULAR[n],
-            .fixstr => |n| n,
-            .fixext => |n| 1 + n,
-            .ext => |n| 1 + REGULAR[n],
-            .int, .uint => |n| REGULAR[n],
-            .float => |n| FLOAT[n],
-            .array, .map => |n| ARRAY[n],
-        };
-    }
-
-    inline fn findNextComponentSize(self: HeaderType) usize {
-        return switch (self) {
-            .nil, .bool, .fixint, .fixarray, .fixmap => 0,
-            .bin, .str => |n| switch (n) {
-                0 => 1,
-                1 => 2,
-                2 => 4,
-                else => unreachable,
-            },
-            .fixstr => |n| n,
-            .fixext => |n| 1 + n,
-            .ext => |n| (switch (n) {
-                0 => 1 + 1,
-                1 => 1 + 2,
-                2 => 1 + 4,
-                else => unreachable,
-            }),
-            .int, .uint => |n| switch (n) {
-                0 => 1,
-                1 => 2,
-                2 => 4,
-                3 => 8,
-            },
-            .float => |n| switch (n) {
-                0 => 4,
-                1 => 8,
-            },
-            .array, .map => |n| switch (n) {
-                0 => 2,
-                1 => 4,
-            },
-        };
-    }
-
-    /// Return the next component size of the value.
-    ///
-    /// ```
-    /// | HeaderType | header data | payload |
-    /// ```
-    ///
-    /// - For fixed-number types, return the payload size.
-    /// - For fixed array and maps, return 0.
-    /// - For the other types, return the header data size.
-    pub fn nextComponentSize(self: HeaderType) usize {
-        switch (lookupTableMode) {
-            .all, .small => {
-                return lookupNextComponentSize(self);
-            },
-            .none => {
-                return findNextComponentSize(self);
-            },
-        }
-    }
-
     pub fn family(self: HeaderType) ValueTypeFamily {
         return switch (self) {
             .nil => .nil,
@@ -785,6 +676,87 @@ pub const HeaderType = union(enum) {
             .ext, .fixext => .ext,
             .array, .fixarray => .array,
             .map, .fixmap => .map,
+        };
+    }
+
+    /// Return the header data size.
+    ///
+    /// ```
+    /// | HeaderType | header data | payload |
+    /// ```
+    pub fn countData(self: HeaderType) u8 {
+        return switch (self) {
+            .nil,
+            .bool,
+            .fixint,
+            .fixstr,
+            .fixarray,
+            .fixmap,
+            .uint,
+            .int,
+            .float,
+            => 0,
+            .bin, .str => |n| switch (n) {
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                else => unreachable,
+            },
+            .fixext => 1,
+            .ext => |n| switch (n) {
+                0 => 1 + 1,
+                1 => 1 + 2,
+                2 => 1 + 4,
+                else => unreachable,
+            },
+            .array, .map => |n| switch (n) {
+                0 => 2,
+                1 => 4,
+            },
+        };
+    }
+
+    /// Return the whole header size.
+    pub fn count(self: HeaderType) u8 {
+        return self.countData() + 1;
+    }
+
+    pub const PayloadSizeInfo = struct {
+        known: u8,
+        is_variable: bool,
+
+        fn init(size: u8, varsized: bool) PayloadSizeInfo {
+            return .{ .known = size, .is_variable = varsized };
+        }
+
+        fn chooseReadSize(self: PayloadSizeInfo, varDefault: usize) usize {
+            if (self.known > 0) {
+                return self.known;
+            } else if (self.is_variable) {
+                return varDefault;
+            } else {
+                return 0;
+            }
+        }
+    };
+
+    pub fn payloadSize(self: HeaderType) PayloadSizeInfo {
+        return switch (self) {
+            .nil, .bool, .fixint => PayloadSizeInfo.init(0, false),
+            .fixstr => |n| PayloadSizeInfo.init(n, false),
+            .uint, .int => |n| PayloadSizeInfo.init(switch (n) {
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                3 => 8,
+            }, false),
+            .float => |n| PayloadSizeInfo.init(switch (n) {
+                0 => 4,
+                1 => 8,
+            }, false),
+            .bin, .str, .ext => PayloadSizeInfo.init(0, true),
+            .fixext => |n| PayloadSizeInfo.init(n, false),
+            .fixarray, .fixmap, .array, .map => PayloadSizeInfo.init(0, true),
         };
     }
 };
@@ -807,40 +779,27 @@ pub const Header = struct {
     /// For array and map, it's the item number of the array or the map.
     size: u32 = 0,
 
-    pub fn from(typ: HeaderType, rest: []const u8) struct { Header, usize } {
+    pub fn from(typ: HeaderType, rest: []const u8) Header {
         return switch (typ) {
-            .nil, .bool, .fixint => .{
-                .{ .type = typ },
-                0,
-            },
+            .nil, .bool, .fixint => .{ .type = typ },
             .bin, .str => readBin: {
-                const lensize = typ.nextComponentSize();
+                const lensize = typ.countData();
                 const len = switch (lensize) {
                     1 => readIntBig(u8, rest[0..1]),
                     2 => readIntBig(u16, rest[0..2]),
                     4 => readIntBig(u32, rest[0..4]),
                     else => unreachable,
                 };
-                break :readBin .{
-                    .{ .type = typ, .size = len },
-                    lensize,
-                };
+                break :readBin .{ .type = typ, .size = len };
             },
-            .fixstr, .fixarray, .fixmap => |nitems| .{
-                .{ .type = typ, .size = nitems },
-                0,
-            },
-            .fixext => readFixExt: {
-                const size = typ.nextComponentSize() - 1;
+            .fixstr, .fixarray, .fixmap => |nitems| .{ .type = typ, .size = nitems },
+            .fixext => |size| readFixExt: {
                 const ext = readIntBig(i8, rest[0..1]);
 
-                break :readFixExt .{
-                    .{ .type = typ, .size = @intCast(size), .ext = ext },
-                    1,
-                };
+                break :readFixExt .{ .type = typ, .size = @intCast(size), .ext = ext };
             },
             .ext => readExt: {
-                const lensize = typ.nextComponentSize() - 1;
+                const lensize = typ.countData() - 1;
                 const ext = readIntBig(i8, rest[lensize..][0..1]);
                 const length = switch (lensize) {
                     1 => readIntBig(u8, rest[1..2]),
@@ -848,25 +807,24 @@ pub const Header = struct {
                     4 => readIntBig(u32, rest[1..5]),
                     else => unreachable,
                 };
-                break :readExt .{ .{ .type = typ, .size = length, .ext = ext }, lensize + 1 };
+                break :readExt .{ .type = typ, .size = length, .ext = ext };
             },
-            .uint, .int, .float => .{
-                .{ .type = typ, .size = @intCast(typ.nextComponentSize()) },
-                0,
-            },
+            .uint, .int => |k| .{ .type = typ, .size = switch (k) {
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                3 => 8,
+            } },
+            .float => |k| .{ .type = typ, .size = switch (k) {
+                0 => 4,
+                1 => 8,
+            } },
             .array, .map => |lensize| readArray: {
                 const size = switch (lensize) {
                     0 => readIntBig(u16, rest[0..2]),
                     1 => readIntBig(u32, rest[0..4]),
                 };
-                const hbytes: usize = switch (lensize) {
-                    0 => 2,
-                    1 => 4,
-                };
-                break :readArray .{
-                    .{ .type = typ, .size = size },
-                    hbytes,
-                };
+                break :readArray .{ .type = typ, .size = size };
             },
         };
     }
