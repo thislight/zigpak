@@ -364,28 +364,28 @@ pub const PREFIX_BUFSIZE = 6;
 
 /// The prefix for a value.
 /// This is the header to be stored before the actual content.
-pub const Prefix = @import("./Prefix.zig");
+pub const Prefix = std.BoundedArray(u8, PREFIX_BUFSIZE);
 
 /// Generate a string prefix.
 pub fn prefixString(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00011111 => {
-            result.append(0b10100000 | (0b00011111 & @as(u8, @intCast(len))));
+            result.appendAssumeCapacity(0b10100000 | (0b00011111 & @as(u8, @intCast(len))));
         },
         0b00011111 + 1...maxInt(u8) => {
-            result.appendSlice(&.{
+            result.appendSliceAssumeCapacity(&.{
                 0xd9,
                 @truncate(len),
             });
         },
         maxInt(u8) + 1...maxInt(u16) => {
-            result.append(0xda);
-            result.writeInt(u16, @truncate(len), .big);
+            result.appendAssumeCapacity(0xda);
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.append(0xdb);
-            result.writeInt(u32, len, .big);
+            result.appendAssumeCapacity(0xdb);
+            result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }
     return result;
@@ -396,18 +396,18 @@ pub fn prefixBinary(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...maxInt(u8) => {
-            result.appendSlice(&.{
+            result.appendSliceAssumeCapacity(&.{
                 @intFromEnum(ContainerType.bin8),
                 @as(u8, @truncate(len)),
             });
         },
         maxInt(u8) + 1...maxInt(u16) => {
-            result.append(@intFromEnum(ContainerType.bin16));
-            result.writeInt(u16, @truncate(len), .big);
+            result.appendAssumeCapacity(@intFromEnum(ContainerType.bin16));
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.append(@intFromEnum(ContainerType.bin32));
-            result.writeInt(u32, len, .big);
+            result.appendAssumeCapacity(@intFromEnum(ContainerType.bin32));
+            result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }
     return result;
@@ -418,15 +418,15 @@ pub fn prefixArray(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            result.append(0b10010000 | (0b00001111 & @as(u8, @truncate(len))));
+            result.appendAssumeCapacity(0b10010000 | (0b00001111 & @as(u8, @truncate(len))));
         },
         (0b00001111 + 1)...maxInt(u16) => {
-            result.append(0xdc);
-            result.writeInt(u16, @truncate(len), .big);
+            result.appendAssumeCapacity(0xdc);
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.append(0xdd);
-            result.writeInt(u32, len, .big);
+            result.appendAssumeCapacity(0xdd);
+            result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }
     return result;
@@ -441,15 +441,15 @@ pub fn prefixMap(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            result.append(0b10000000 | (0b00001111 & @as(u8, @truncate(len))));
+            result.appendAssumeCapacity(0b10000000 | (0b00001111 & @as(u8, @truncate(len))));
         },
         (0b00001111 + 1)...maxInt(u16) => {
-            result.append(0xde);
-            result.writeInt(u16, @truncate(len), .big);
+            result.appendAssumeCapacity(0xde);
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.append(0xdf);
-            result.writeInt(u32, len, .big);
+            result.appendAssumeCapacity(0xdf);
+            result.writer().writeInt(u32, len, .big) catch unreachable;
         },
     }
     return result;
@@ -460,22 +460,22 @@ pub fn prefixExt(len: u32, extype: i8) Prefix {
     var result: Prefix = .{};
     switch (len) {
         1, 2, 4, 8, 16 => |b| {
-            result.append(0xd4 + log2(b));
-            result.writeInt(i8, extype, .big);
+            result.appendAssumeCapacity(0xd4 + log2(b));
+            result.writer().writeInt(i8, extype, .big) catch unreachable;
         },
         0...maxInt(u8) => {
-            result.appendSlice(&.{ 0xc7, @truncate(len) });
-            result.writeInt(i8, extype, .big);
+            result.appendSliceAssumeCapacity(&.{ 0xc7, @truncate(len) });
+            result.writer().writeInt(i8, extype, .big) catch unreachable;
         },
         maxInt(u8) + 1...maxInt(u16) => {
-            result.append(0xc8);
-            result.writeInt(u16, @truncate(len), .big);
-            result.writeInt(i8, extype, .big);
+            result.appendAssumeCapacity(0xc8);
+            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            result.writer().writeInt(i8, extype, .big) catch unreachable;
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.append(0xc9);
-            result.writeInt(u32, @truncate(len), .big);
-            result.writeInt(i8, extype, .big);
+            result.appendAssumeCapacity(0xc9);
+            result.writer().writeInt(u32, @truncate(len), .big) catch unreachable;
+            result.writer().writeInt(i8, extype, .big) catch unreachable;
         },
     }
     return result;
