@@ -4,8 +4,7 @@
 //!
 //! - Unpack data in memory: `Unpack`
 //! - Emit messagepack values into memory:
-//!   - `writeNil`, `writeBool`
-//!   - `writeInt`, `writeIntSm`, `writeFloat`
+//!   - `Nil`, `Bool`, `Int`, `Float`
 //!   - `prefixString`, `prefixBinary`, `prefixExt`
 //!   - `prefixArray`, `prefixMap`
 //! - `std.io` helpers: `io`
@@ -63,11 +62,11 @@
 //! buf.appendSliceAssumeCapacity(prefixArray(3).constSlice());
 //!
 //! { // The first element: nil
-//!     buf.len += writeNil(buf.unusedCapacitySlice());
+//!     buf.len += Nil.write(buf.unusedCapacitySlice());
 //! }
 //!
 //! { // The second element: int 1
-//!     buf.len += writeInt(i8, buf.unusedCapacitySlice(), 1);
+//!     buf.len += SInt.writeSm(i8, buf.unusedCapacitySlice(), 1);
 //! }
 //!
 //! { // The third element: a string
@@ -96,7 +95,7 @@ pub const io = @import("./io.zig");
 pub const LookupTableOptimize = @import("./budopts.zig").LookupTableOptimize;
 pub const Unpack = @import("./Unpack.zig");
 
-/// The look up table optimization level.
+/// The lookup table optimization level.
 /// Use `-Dlookup-table=<target>` in the build system to change this level.
 pub const lookupTableMode: LookupTableOptimize = @enumFromInt(@intFromEnum(@import("budopts").lookupTable));
 
@@ -123,185 +122,231 @@ const log2IntCeil = std.math.log2_int_ceil;
 const log2 = std.math.log2;
 const readFloatBig = compatstd.mem.readFloatBig;
 const writeFloatBig = compatstd.mem.writeFloatBig;
+const toolkit = @import("./toolkit.zig");
+const countIntByteRounded = toolkit.countIntByteRounded;
+const makeFixIntNeg = toolkit.makeFixIntNeg;
+const makeFixIntPos = toolkit.makeFixIntPos;
 
-fn makeFixIntPos(value: u7) u8 {
-    return ~ContainerType.MASK_FIXED_INT_POSITIVE & value;
-}
+const ComptimeInt = @import("./ComptimeInt.zig");
 
-fn makeFixIntNeg(value: i6) u8 {
-    return @intFromEnum(ContainerType.fixed_int_negative) | (~ContainerType.MASK_FIXED_INT_NEGATIVE & @as(u8, @intCast(@abs(value))));
-}
+/// Wrappers of integer type `T`, signed or unsigned.
+pub fn Int(T: type) type {
+    if (T == comptime_int) {
+        return ComptimeInt;
+    }
 
-/// Write integer `value` as specific type `T`, signed or unsigned.
-///
-/// This function uses type information from `T` to recognise the type in msgpack.
-/// If the type is `i64`, the `value` is stored as a 64-bit signed integer; if the type is `u24`,
-/// a 32-bit unsigned is used.
-///
-/// If you need to use the smallest type depends on the `value`, see `writeIntSm`.
-pub fn writeInt(comptime T: type, dst: []u8, value: T) usize {
-    const signed = compatstd.meta.signedness(value) == .signed;
-    const bits = compatstd.meta.bitsOfNumber(value);
+    const signed = compatstd.meta.signednessOf(T) == .signed;
+    const bits = @bitSizeOf(T);
     if (bits > 64) {
         @compileError("the max integer size is 64 bits");
     }
-    // TODO: reduce the generated size by move common logic to another function.
-    const roundedBytes = if (signed) switch (bits) {
-        0...6 => 0,
-        7...8 => 1,
-        9...16 => 2,
-        17...32 => 4,
-        33...64 => 8,
-        else => unreachable,
-    } else switch (bits) {
-        0...7 => 0,
-        8 => 1,
-        9...16 => 2,
-        17...32 => 4,
-        33...64 => 8,
-        else => unreachable,
+
+    const nbytes = countIntByteRounded(signed, bits);
+
+    return struct {
+        pub fn count(_: T) usize {
+            return 1 + nbytes;
+        }
+
+        pub fn countSm(value: T) usize {
+            return serializeSm(std.io.null_writer, value) catch unreachable;
+        }
+
+        fn headerOf(value: T) u8 {
+            return if (signed) switch (nbytes) {
+                0 => makeFixIntNeg(@intCast(value)),
+                1 => 0xd0,
+                2 => 0xd1,
+                4 => 0xd2,
+                8 => 0xd3,
+                else => unreachable,
+            } else switch (nbytes) {
+                0 => makeFixIntPos(@intCast(value)),
+                1 => 0xcc,
+                2 => 0xcd,
+                4 => 0xce,
+                8 => 0xcf,
+                else => unreachable,
+            };
+        }
+
+        pub fn serialize(writer: anytype, value: T) !usize {
+            _ = try writer.writeByte(headerOf(value));
+
+            if (nbytes == 0) {
+                return 1;
+            }
+
+            const W = std.meta.Int(if (signed) .signed else .unsigned, nbytes * 8);
+            try writer.writeInt(W, @as(W, value), .big);
+            return 1 + nbytes;
+        }
+
+        /// Write integer into `dst`.
+        ///
+        /// This function uses type information from `T` to recognise the type in msgpack.
+        /// If the type is `i64`, the value is stored as a 64-bit signed integer; if the type is u24,
+        /// a 32-bit unsigned is used.
+        ///
+        /// If you need to use the smallest type depends on the `value`, see `writeIntSm`.
+        pub fn write(dst: []u8, value: T) usize {
+            var stream = std.io.fixedBufferStream(dst);
+            return serialize(stream.writer(), value) catch unreachable;
+        }
+
+        /// Write integer into `writer` uses smallest msgpack type.
+        pub fn serializeSm(writer: anytype, value: T) !usize {
+            if (value >= 0) {
+                if (value >= 0 and value <= 0b01111111) {
+                    return try Int(u7).serialize(writer, @intCast(value));
+                } else if (value <= maxInt(u8)) {
+                    return try Int(u8).serialize(writer, @intCast(value));
+                } else if (value <= maxInt(u16)) {
+                    return try Int(u16).serialize(writer, @intCast(value));
+                } else if (value <= maxInt(u32)) {
+                    return try Int(u32).serialize(writer, @intCast(value));
+                } else if (value <= maxInt(u64)) {
+                    return try Int(u64).serialize(writer, @intCast(value));
+                }
+            } else if (signed) {
+                if (value >= -0b00011111) {
+                    return try Int(i6).serialize(writer, @intCast(value));
+                } else if (value >= minInt(i8)) {
+                    return try Int(i8).serialize(writer, @intCast(value));
+                } else if (value >= minInt(i16)) {
+                    return try Int(i16).serialize(writer, @intCast(value));
+                } else if (value >= minInt(i32)) {
+                    return try Int(i32).serialize(writer, @intCast(value));
+                } else if (value >= minInt(i64)) {
+                    return try Int(i64).serialize(writer, @intCast(value));
+                }
+            }
+            unreachable;
+        }
+
+        pub fn writeSm(dst: []u8, value: T) usize {
+            var stream = std.io.fixedBufferStream(dst);
+            return serializeSm(stream.writer(), value) catch unreachable;
+        }
     };
-    const tier = switch (roundedBytes) {
-        0, 1 => 0,
-        2 => 1,
-        4 => 2,
-        8 => 3,
-        else => unreachable,
-    };
-    const header: u8 = if (signed) switch (roundedBytes) {
-        0 => makeFixIntNeg(@intCast(value)),
-        1, 2, 4, 8 => 0xd0 + tier,
-        else => unreachable,
-    } else switch (roundedBytes) {
-        0 => makeFixIntPos(@intCast(value)),
-        1, 2, 4, 8 => 0xcc + tier,
-        else => unreachable,
-    };
-    dst[0] = header;
-    if (roundedBytes == 0) {
-        return 1;
-    }
-    const writtenType = std.meta.Int(if (signed) .signed else .unsigned, roundedBytes * 8);
-    writeIntBig(writtenType, dst[1 .. roundedBytes + 1], @as(writtenType, value));
-    return 1 + roundedBytes;
 }
 
-/// Write the integer `value` with the smallest type.
-///
-/// The value must can be represented in 64 bits
-/// (signed or unsigned), or the behaviour is undefined.
-///
-/// This function checks in runtime to use smallest messagepack type to
-/// store the value.
-pub fn writeIntSm(comptime T: type, dst: []u8, value: T) usize {
-    if (value >= 0) {
-        if (value >= 0 and value <= 0b01111111) {
-            return writeInt(u7, dst, @intCast(value));
-        } else if (value <= maxInt(u8)) {
-            return writeInt(u8, dst, @intCast(value));
-        } else if (value <= maxInt(u16)) {
-            return writeInt(u16, dst, @intCast(value));
-        } else if (value <= maxInt(u32)) {
-            return writeInt(u32, dst, @intCast(value));
-        } else if (value <= maxInt(u64)) {
-            return writeInt(u64, dst, @intCast(value));
-        }
-    } else {
-        if (value >= -0b00011111) {
-            return writeInt(i6, dst, @intCast(value));
-        } else if (value >= minInt(i8)) {
-            return writeInt(i8, dst, @intCast(value));
-        } else if (value >= minInt(i16)) {
-            return writeInt(i16, dst, @intCast(value));
-        } else if (value >= minInt(i32)) {
-            return writeInt(i32, dst, @intCast(value));
-        } else if (value >= minInt(i64)) {
-            return writeInt(i64, dst, @intCast(value));
-        }
+pub const SInt = Int(i64);
+pub const UInt = Int(u64);
+
+const ComptimeFloat = @import("./ComptimeFloat.zig");
+
+/// Wrapper of float types.
+pub fn Float(T: type) type {
+    if (T == comptime_float) {
+        return ComptimeFloat;
     }
-    unreachable;
 
-    // if (value < 0) {
-    //     return switch (value) {
-    //         -0b00011111...-1 => writeInt(i6, dst, @intCast(value)),
-    //         minInt(i8)...-0b00100000 => writeInt(i8, dst, @intCast(value)),
-    //         minInt(i16)...minInt(i8) - 1 => writeInt(i16, dst, @intCast(value)),
-    //         minInt(i32)...minInt(i16) - 1 => writeInt(i32, dst, @intCast(value)),
-    //         minInt(i64)...minInt(i32) - 1 => writeInt(i64, dst, @intCast(value)),
-    //         else => unreachable,
-    //     };
-    // } else {
-    //     return switch (value) {
-    //         0...0b01111111 => writeInt(u7, dst, @intCast(value)),
-    //         0b10000000...maxInt(u8) => writeInt(u8, dst, @intCast(value)),
-    //         maxInt(u8) + 1...maxInt(u16) => writeInt(u16, dst, @intCast(value)),
-    //         maxInt(u16) + 1...maxInt(u32) => writeInt(u32, dst, @intCast(value)),
-    //         maxInt(u32) + 1...maxInt(u64) => writeInt(u64, dst, @intCast(value)),
-    //         else => unreachable,
-    //     };
-    // }
-}
-
-/// Write the float `value` as specific type `T`.
-///
-/// This function uses `T` to recognise the type for messagepack.
-/// For example: If `T` is `f64`, the value is stored as 64-bit float;
-/// if `T` is `f16`, the value is stored as 32-bit float.
-pub fn writeFloat(comptime T: type, dst: []u8, value: T) usize {
-    const roundedBytes = switch (compatstd.meta.bitsOfType(T)) {
+    const nbytes = switch (@bitSizeOf(T)) {
         0...32 => 4,
         33...64 => 8,
         else => @compileError(comptimePrint("unsupported {}", .{@typeName(T)})),
     };
-    dst[0] = switch (roundedBytes) {
-        4 => 0xca,
-        8 => 0xcb,
-        else => unreachable,
+
+    return struct {
+        pub fn count(_: T) usize {
+            return 1 + nbytes;
+        }
+
+        pub fn serialize(writer: anytype, value: T) !usize {
+            _ = try writer.writeByte(switch (nbytes) {
+                4 => 0xca,
+                8 => 0xcb,
+                else => unreachable,
+            });
+            var buf = [_]u8{0} ** 8;
+            switch (nbytes) {
+                4 => writeFloatBig(f32, buf[0..4], @floatCast(value)),
+                8 => writeFloatBig(f64, buf[0..8], @floatCast(value)),
+                else => unreachable,
+            }
+            _ = try writer.write(buf[0..nbytes]);
+            return 1 + nbytes;
+        }
+
+        pub fn write(dst: []u8, value: T) usize {
+            var stream = std.io.fixedBufferStream(dst);
+            return serialize(stream.writer(), value) catch unreachable;
+        }
+
+        pub fn countSm(value: T) usize {
+            return serializeSm(std.io.null_writer, value) catch unreachable;
+        }
+
+        pub fn serializeSm(writer: anytype, value: T) !usize {
+            const wontLosePrecision = @as(f32, @floatCast(value)) == value;
+
+            if (wontLosePrecision) {
+                return try Float(f32).serialize(writer, @floatCast(value));
+            } else {
+                return try Float(f64).serialize(writer, @floatCast(value));
+            }
+        }
+
+        pub fn writeSm(dst: []u8, value: T) usize {
+            var stream = std.io.fixedBufferStream(dst);
+            return serializeSm(stream.writer(), value) catch unreachable;
+        }
     };
-    switch (roundedBytes) {
-        4 => writeFloatBig(f32, dst[1..5], @floatCast(value)),
-        8 => writeFloatBig(f64, dst[1..9], @floatCast(value)),
-        else => unreachable,
+}
+
+pub const AnyFloat = Float(f64);
+
+/// Wrapper of `nil`.
+pub const Nil = struct {
+    pub fn count() usize {
+        return 1;
     }
-    return 1 + roundedBytes;
-}
 
-/// Write the float as the smallest float type,
-/// as long as the precision won't lost.
-///
-/// This may introduce runtime check for certain input types.
-pub inline fn writeFloatSm(comptime T: type, dst: []u8, value: T) usize {
-    const wontLosePrecision = @as(f32, @floatCast(value)) == value;
-
-    if (wontLosePrecision) {
-        return writeFloat(f32, dst, @floatCast(value));
-    } else {
-        return writeFloat(f64, dst, @floatCast(value));
+    pub fn serialize(writer: anytype) !usize {
+        _ = try writer.writeByte(0xc0);
+        return 1;
     }
-}
 
-/// Write nil into the `dst`.
-pub fn writeNil(dst: []u8) usize {
-    dst[0] = 0xc0;
-    return 1;
-}
+    pub fn write(dst: []u8) usize {
+        dst[0] = 0xc0;
+        return 1;
+    }
 
-test writeNil {
-    const t = std.testing;
-    var buf: [1]u8 = .{0};
-    const size = writeNil(&buf);
-    try t.expectEqual(@as(usize, 1), size);
-    try t.expectEqual(@as(u8, 0xc0), buf[0]);
-}
+    test write {
+        const t = std.testing;
+        var buf: [1]u8 = .{0};
+        const size = Nil.write(&buf);
+        try t.expectEqual(@as(usize, 1), size);
+        try t.expectEqual(@as(u8, 0xc0), buf[0]);
+    }
 
-/// Write bool into the `dst`
-pub fn writeBool(dst: []u8, value: bool) usize {
-    dst[0] = switch (value) {
-        true => 0xc3,
-        false => 0xc2,
-    };
-    return 1;
-}
+    pub const countSm = count;
+    pub const serializeSm = serialize;
+    pub const writeSm = write;
+};
+
+pub const Bool = struct {
+    pub fn count(_: bool) usize {
+        return 1;
+    }
+    pub fn serialize(writer: anytype, value: bool) !usize {
+        _ = try writer.writeByte(switch (value) {
+            true => 0xc3,
+            false => 0xc2,
+        });
+        return 1;
+    }
+
+    pub fn write(dst: []u8, value: bool) usize {
+        var stream = std.io.fixedBufferStream(dst);
+        return serialize(stream.writer(), value) catch unreachable;
+    }
+
+    pub const countSm = count;
+    pub const serializeSm = serialize;
+    pub const writeSm = write;
+};
 
 /// Use this constant to decide the `Prefix` buffer size in comptime.
 ///
@@ -319,68 +364,69 @@ pub const PREFIX_BUFSIZE = 6;
 
 /// The prefix for a value.
 /// This is the header to be stored before the actual content.
-pub const Prefix = std.BoundedArray(u8, PREFIX_BUFSIZE);
-// TODO: further optimize appendAssumeCapacity - optimizer does not inline the call
+pub const Prefix = @import("./Prefix.zig");
 
 /// Generate a string prefix.
-pub inline fn prefixString(len: u32) Prefix {
+pub fn prefixString(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00011111 => {
-            result.appendAssumeCapacity(0b10100000 | (0b00011111 & @as(u8, @intCast(len))));
+            return Prefix.fromSlice(&.{0b10100000 | (0b00011111 & @as(u8, @intCast(len)))});
         },
         0b00011111 + 1...maxInt(u8) => {
-            result.appendAssumeCapacity(0xd9);
-            result.appendAssumeCapacity(@truncate(len));
+            return Prefix.fromSlice(&.{
+                0xd9,
+                @truncate(len),
+            });
         },
         maxInt(u8) + 1...maxInt(u16) => {
-            result.appendAssumeCapacity(0xda);
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            result.append(0xda);
+            result.writeInt(u16, @truncate(len), .big);
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(0xdb);
-            result.writer().writeInt(u32, len, .big) catch unreachable;
+            result.append(0xdb);
+            result.writeInt(u32, len, .big);
         },
     }
     return result;
 }
 
 /// Generate a binary prefix.
-pub inline fn prefixBinary(len: u32) Prefix {
+pub fn prefixBinary(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...maxInt(u8) => {
-            result.appendSliceAssumeCapacity(&.{
+            return Prefix.fromSlice(&.{
                 @intFromEnum(ContainerType.bin8),
                 @as(u8, @truncate(len)),
             });
         },
         maxInt(u8) + 1...maxInt(u16) => {
-            result.appendAssumeCapacity(@intFromEnum(ContainerType.bin16));
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            result.append(@intFromEnum(ContainerType.bin16));
+            result.writeInt(u16, @truncate(len), .big);
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(@intFromEnum(ContainerType.bin32));
-            result.writer().writeInt(u32, len, .big) catch unreachable;
+            result.append(@intFromEnum(ContainerType.bin32));
+            result.writeInt(u32, len, .big);
         },
     }
     return result;
 }
 
 /// Generate a array prefix for `len`.
-pub inline fn prefixArray(len: u32) Prefix {
+pub fn prefixArray(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            result.appendAssumeCapacity(0b10010000 | (0b00001111 & @as(u8, @truncate(len))));
+            return Prefix.fromSlice(&.{0b10010000 | (0b00001111 & @as(u8, @truncate(len)))});
         },
         (0b00001111 + 1)...maxInt(u16) => {
-            result.appendAssumeCapacity(0xdc);
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            result.append(0xdc);
+            result.writeInt(u16, @truncate(len), .big);
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(0xdd);
-            result.writer().writeInt(u32, len, .big) catch unreachable;
+            result.append(0xdd);
+            result.writeInt(u32, len, .big);
         },
     }
     return result;
@@ -391,46 +437,45 @@ pub inline fn prefixArray(len: u32) Prefix {
 /// The `len` here is the number of the k-v pairs.
 /// The elements of the map must be placed as
 /// KEY VALUE KEY VALUE ... so on.
-pub inline fn prefixMap(len: u32) Prefix {
+pub fn prefixMap(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            result.appendAssumeCapacity(0b10000000 | (0b00001111 & @as(u8, @truncate(len))));
+            return Prefix.fromSlice(&.{0b10000000 | (0b00001111 & @as(u8, @truncate(len)))});
         },
         (0b00001111 + 1)...maxInt(u16) => {
-            result.appendAssumeCapacity(0xde);
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            result.append(0xde);
+            result.writeInt(u16, @truncate(len), .big);
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(0xdf);
-            result.writer().writeInt(u32, len, .big) catch unreachable;
+            result.append(0xdf);
+            result.writeInt(u32, len, .big);
         },
     }
     return result;
 }
 
 /// Generate a ext prefix.
-pub inline fn prefixExt(len: u32, extype: i8) Prefix {
+pub fn prefixExt(len: u32, extype: i8) Prefix {
     var result: Prefix = .{};
-    const writer = result.writer();
     switch (len) {
         1, 2, 4, 8, 16 => |b| {
-            result.appendAssumeCapacity(0xd4 + log2(b));
-            writer.writeInt(i8, extype, .big) catch unreachable;
+            result.append(0xd4 + log2(b));
+            result.writeInt(i8, extype, .big);
         },
         0...maxInt(u8) => {
-            result.appendSliceAssumeCapacity(&.{ 0xc7, @truncate(len) });
-            writer.writeInt(i8, extype, .big) catch unreachable;
+            result.appendSlice(&.{ 0xc7, @truncate(len) });
+            result.writeInt(i8, extype, .big);
         },
         maxInt(u8) + 1...maxInt(u16) => {
-            result.appendAssumeCapacity(0xc8);
-            writer.writeInt(u16, @truncate(len), .big);
-            writer.writeInt(i8, extype, .big);
+            result.append(0xc8);
+            result.writeInt(u16, @truncate(len), .big);
+            result.writeInt(i8, extype, .big);
         },
         maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(0xc9);
-            writer.writeInt(u32, @truncate(len), .big);
-            writer.writeInt(i8, extype, .big);
+            result.append(0xc9);
+            result.writeInt(u32, @truncate(len), .big);
+            result.writeInt(i8, extype, .big);
         },
     }
     return result;

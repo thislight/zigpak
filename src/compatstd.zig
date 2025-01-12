@@ -71,18 +71,16 @@ pub const meta = struct {
         }
     }
 
-    pub inline fn signedness(value: anytype) std.builtin.Signedness {
+    pub inline fn signednessOf(T: type) std.builtin.Signedness {
         if (isZig0d14AndLater) {
-            return switch (@typeInfo(@TypeOf(value))) {
+            return switch (@typeInfo(T)) {
                 .int => |i| i.signedness,
-                .comptime_int => value < 0,
-                else => @compileError("value must be int or comptime_int"),
+                else => @compileError("T must be int type"),
             };
         } else {
-            return switch (@typeInfo(@TypeOf(value))) {
+            return switch (@typeInfo(T)) {
                 .Int => |i| i.signedness,
-                .ComptimeInt => value < 0,
-                else => @compileError("value must be int or comptime_int"),
+                else => @compileError("T must be int type"),
             };
         }
     }

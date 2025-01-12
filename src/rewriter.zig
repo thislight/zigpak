@@ -12,12 +12,12 @@ fn rewriteValue(
     switch (h.type.family()) {
         .nil => {
             _ = try values.nil(reader, ?*anyopaque, h);
-            _ = try zigpak.io.writeNil(writer);
+            _ = try zigpak.Nil.serialize(writer);
         },
-        .bool => _ = try zigpak.io.writeBool(writer, try values.bool(reader, h)),
-        .int => _ = try zigpak.io.writeIntSm(writer, try values.int(reader, i64, h)),
-        .uint => _ = try zigpak.io.writeIntSm(writer, try values.int(reader, u64, h)),
-        .float => _ = try zigpak.io.writeFloatSm(writer, try values.float(reader, f64, h)),
+        .bool => _ = try zigpak.Bool.serialize(writer, try values.bool(reader, h)),
+        .int => _ = try zigpak.SInt.serializeSm(writer, try values.int(reader, i64, h)),
+        .uint => _ = try zigpak.UInt.serializeSm(writer, try values.int(reader, u64, h)),
+        .float => _ = try zigpak.AnyFloat.serializeSm(writer, try values.float(reader, f64, h)),
         .str => {
             var strReader = try values.rawReader(reader, h);
             var strbuf: [4096]u8 = undefined;
@@ -63,7 +63,7 @@ fn rewriteValue(
 }
 
 fn rewrite(reader: anytype, writer: anytype) !void {
-    var buffer: [4096]u8 = undefined;
+    var buffer: [zigpak.io.UnpackReader.RECOMMENDED_BUFFER_SIZE]u8 = undefined;
     var vread = zigpak.io.UnpackReader.init(&buffer);
     while (true) {
         const h = try vread.next(reader);

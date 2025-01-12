@@ -7,8 +7,6 @@
 //!   - `writeStringPrefix`, `writeString`
 //!   - `writeBinaryPrefix`, `writeBinary`
 //!   - `writeExtPrefix`, `writeExt`
-//!   - `writeBool`, `writeNil`
-//!   - `writeInt`, `writeIntSm`, `writeFloat`
 //!   - `writeArrayPrefix`, `writeMapPrefix`
 const fmt = @import("./root.zig");
 const std = @import("std");
@@ -51,61 +49,6 @@ pub fn writeExt(writer: anytype, extype: i8, payload: []const u8) !usize {
     return size1 + size2;
 }
 
-pub fn writeBool(writer: anytype, value: bool) !usize {
-    var buf = [_]u8{0};
-    _ = fmt.writeBool(&buf, value);
-    return try writer.write(&buf);
-}
-
-pub fn writeNil(writer: anytype) !usize {
-    var buf = [_]u8{0};
-    _ = fmt.writeNil(&buf);
-    return try writer.write(&buf);
-}
-
-fn BufferForNumber(comptime T: type) type {
-    const bsize = switch (@bitSizeOf(T)) {
-        1...8 => 1,
-        9...16 => 2,
-        17...32 => 4,
-        33...64 => 8,
-        else => @compileError(comptimePrint("unsupported {}", .{@typeName(T)})),
-    };
-    return [bsize + 1]u8;
-}
-
-pub fn writeInt(writer: anytype, value: anytype) !usize {
-    const T = @TypeOf(value);
-    var buf: BufferForNumber(T) = undefined;
-    const bsize = fmt.writeInt(T, &buf, value);
-    const wsize = try writer.write(buf[0..bsize]);
-    return wsize;
-}
-
-pub fn writeIntSm(writer: anytype, value: anytype) !usize {
-    var buf: BufferForNumber(@TypeOf(value)) = undefined;
-    // std.debug.print("writeIntSm value={} buf.len={}\n", .{ value, buf.len });
-    const bsize = fmt.writeIntSm(@TypeOf(value), &buf, value);
-    const wsize = try writer.write(buf[0..bsize]);
-    return wsize;
-}
-
-pub fn writeFloat(writer: anytype, value: anytype) !usize {
-    const T = @TypeOf(value);
-    var buf: BufferForNumber(@TypeOf(value)) = undefined;
-    const bsize = fmt.writeFloat(T, &buf, value);
-    const wsize = try writer.write(buf[0..bsize]);
-    return wsize;
-}
-
-pub fn writeFloatSm(writer: anytype, value: anytype) !usize {
-    const T = @TypeOf(value);
-    var buf: BufferForNumber(@TypeOf(value)) = undefined;
-    const bsize = fmt.writeFloatSm(T, &buf, value);
-    const wsize = try writer.write(buf[0..bsize]);
-    return wsize;
-}
-
 pub fn writeArrayPrefix(writer: anytype, length: u32) !usize {
     const prefix = fmt.prefixArray(length);
     const slice = prefix.constSlice();
@@ -137,6 +80,9 @@ pub const UnpackReader = struct {
     unpack: fmt.Unpack,
     buffer: []u8,
     readsize: usize = 0,
+
+    /// Recommended min buffer size.
+    pub const RECOMMENDED_BUFFER_SIZE = std.mem.page_size;
 
     pub fn init(buffer: []u8) UnpackReader {
         std.debug.assert(buffer.len >= 8);
