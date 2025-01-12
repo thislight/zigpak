@@ -22,7 +22,6 @@ pub fn unusedCapacitySlice(self: *Prefix) []u8 {
 }
 
 pub fn checkedAppend(self: *Prefix, item: u8) error{BufOverflow}!void {
-    @setRuntimeSafety(false);
     if (self.len > std.math.maxInt(u3) - 1) {
         return error.BufOverflow;
     }
@@ -35,12 +34,11 @@ pub fn append(self: *Prefix, item: u8) void {
 }
 
 pub fn checkedAppendSlice(self: *Prefix, items: []const u8) error{BufOverflow}!void {
-    @setRuntimeSafety(false);
     if (std.math.maxInt(u3) - self.len < items.len) {
         return error.BufOverflow;
     }
     std.mem.copyForwards(u8, self.unusedCapacitySlice(), items);
-    self.len += @intCast(items.len);
+    self.len += @truncate(items.len);
 }
 
 pub fn appendSlice(self: *Prefix, items: []const u8) void {
@@ -48,7 +46,6 @@ pub fn appendSlice(self: *Prefix, items: []const u8) void {
 }
 
 pub fn checkedWriteInt(self: *Prefix, T: type, value: T, endian: std.builtin.Endian) error{BufOverflow}!void {
-    @setRuntimeSafety(false);
     const intsz = @divExact(@bitSizeOf(T), 8);
     if (std.math.maxInt(u3) - self.len < intsz) {
         return error.BufOverflow;
@@ -62,9 +59,10 @@ pub fn writeInt(self: *Prefix, T: type, value: T, endian: std.builtin.Endian) vo
 }
 
 pub fn fromSlice(value: []const u8) Prefix {
-    var result: Prefix = .{};
+    var result: Prefix = .{
+        .len = @intCast(value.len),
+    };
     std.mem.copyForwards(u8, &result.buffer, value);
-    result.len = @intCast(value.len);
     return result;
 }
 

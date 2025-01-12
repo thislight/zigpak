@@ -371,10 +371,10 @@ pub fn prefixString(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00011111 => {
-            return Prefix.fromSlice(&.{0b10100000 | (0b00011111 & @as(u8, @intCast(len)))});
+            result.append(0b10100000 | (0b00011111 & @as(u8, @intCast(len))));
         },
         0b00011111 + 1...maxInt(u8) => {
-            return Prefix.fromSlice(&.{
+            result.appendSlice(&.{
                 0xd9,
                 @truncate(len),
             });
@@ -396,7 +396,7 @@ pub fn prefixBinary(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...maxInt(u8) => {
-            return Prefix.fromSlice(&.{
+            result.appendSlice(&.{
                 @intFromEnum(ContainerType.bin8),
                 @as(u8, @truncate(len)),
             });
@@ -418,7 +418,7 @@ pub fn prefixArray(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            return Prefix.fromSlice(&.{0b10010000 | (0b00001111 & @as(u8, @truncate(len)))});
+            result.append(0b10010000 | (0b00001111 & @as(u8, @truncate(len))));
         },
         (0b00001111 + 1)...maxInt(u16) => {
             result.append(0xdc);
@@ -441,7 +441,7 @@ pub fn prefixMap(len: u32) Prefix {
     var result: Prefix = .{};
     switch (len) {
         0...0b00001111 => {
-            return Prefix.fromSlice(&.{0b10000000 | (0b00001111 & @as(u8, @truncate(len)))});
+            result.append(0b10000000 | (0b00001111 & @as(u8, @truncate(len))));
         },
         (0b00001111 + 1)...maxInt(u16) => {
             result.append(0xde);
