@@ -22,8 +22,8 @@
 //!             ^ ~~~~~~ The string content
 //! ```
 //!
-//! So to put a string into the document, use the `prefixString` to write the
-//! prefix, and write the content.
+//! So to put a string into the document, use the functions from `AnyStr` to
+//!  write the prefix, and write the content.
 //!
 //! ```zig
 //! const content = "Hello World";
@@ -343,17 +343,6 @@ pub const Bool = struct {
 };
 
 /// Use this constant to decide the `Prefix` buffer size in comptime.
-///
-/// The prefixs are not always filled up all the buffer.
-///
-/// ```zig
-/// var buf: [zigpak.PREFIX_BUFSIZE]u8 = undefined;
-///
-/// const prefix = prefixString(12);
-/// std.mem.copyForward(u8, &buf, prefix.constSlice());
-///
-/// const header = buf[0..prefix.len]; // the actual header
-/// ```
 pub const PREFIX_BUFSIZE = 6;
 
 /// The prefix for a value.
