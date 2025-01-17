@@ -145,10 +145,6 @@ pub fn Int(T: type) type {
             return 1 + nbytes;
         }
 
-        pub fn countSm(value: T) usize {
-            return pipeSm(std.io.null_writer, value) catch unreachable;
-        }
-
         fn headerOf(value: T) u8 {
             return if (signed) switch (nbytes) {
                 0 => makeFixIntNeg(@intCast(value)),
@@ -191,6 +187,10 @@ pub fn Int(T: type) type {
             return @call(.always_inline, pipe, .{ stream.writer(), value }) catch unreachable;
         }
 
+        pub fn countSm(value: T) usize {
+            return @call(.always_inline, pipeSm, .{ std.io.null_writer, value }) catch unreachable;
+        }
+
         /// Write integer into `writer` uses smallest msgpack type.
         pub fn pipeSm(writer: anytype, value: T) !usize {
             if (value >= 0) {
@@ -223,8 +223,7 @@ pub fn Int(T: type) type {
 
         pub fn writeSm(dst: []u8, value: T) usize {
             var stream = std.io.fixedBufferStream(dst);
-            // TODO: enforce always_inline
-            return @call(.always_inline, pipeSm, .{ stream.writer(), value }) catch unreachable;
+            return pipeSm(stream.writer(), value) catch unreachable;
         }
     };
 }
@@ -269,11 +268,11 @@ pub fn Float(T: type) type {
 
         pub fn write(dst: []u8, value: T) usize {
             var stream = std.io.fixedBufferStream(dst);
-            return pipe(stream.writer(), value) catch unreachable;
+            return @call(.always_inline, pipe, .{ stream.writer(), value }) catch unreachable;
         }
 
         pub fn countSm(value: T) usize {
-            return pipeSm(std.io.null_writer, value) catch unreachable;
+            return @call(.always_inline, pipeSm, .{ std.io.null_writer, value }) catch unreachable;
         }
 
         pub fn pipeSm(writer: anytype, value: T) !usize {
@@ -288,7 +287,7 @@ pub fn Float(T: type) type {
 
         pub fn writeSm(dst: []u8, value: T) usize {
             var stream = std.io.fixedBufferStream(dst);
-            return pipeSm(stream.writer(), value) catch unreachable;
+            return @call(.always_inline, pipeSm, .{ stream.writer(), value }) catch unreachable;
         }
     };
 }
@@ -325,17 +324,21 @@ pub const Bool = struct {
         return 1;
     }
 
-    pub fn pipe(writer: anytype, value: bool) !usize {
-        _ = try writer.writeByte(switch (value) {
+    inline fn convert(value: bool) u8 {
+        return switch (value) {
             true => 0xc3,
             false => 0xc2,
-        });
+        };
+    }
+
+    pub fn pipe(writer: anytype, value: bool) !usize {
+        _ = try writer.writeByte(convert(value));
         return 1;
     }
 
     pub fn write(dst: []u8, value: bool) usize {
-        var stream = std.io.fixedBufferStream(dst);
-        return pipe(stream.writer(), value) catch unreachable;
+        dst[0] = convert(value);
+        return 1;
     }
 };
 
