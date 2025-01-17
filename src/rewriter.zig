@@ -6,7 +6,7 @@ const zigpak = @import("zigpak");
 fn rewriteValue(
     reader: anytype,
     writer: anytype,
-    values: *zigpak.io.UnpackReader,
+    values: *zigpak.UnpackReader,
     h: zigpak.Header,
 ) !void {
     switch (h.type.family()) {
@@ -63,8 +63,8 @@ fn rewriteValue(
 }
 
 fn rewrite(reader: anytype, writer: anytype) !void {
-    var buffer: [zigpak.io.UnpackReader.RECOMMENDED_BUFFER_SIZE]u8 = undefined;
-    var vread = zigpak.io.UnpackReader.init(&buffer);
+    var buffer: [zigpak.UnpackReader.RECOMMENDED_BUFFER_SIZE]u8 = undefined;
+    var vread = zigpak.UnpackReader.init(&buffer);
     while (true) {
         const h = try vread.next(reader);
         try rewriteValue(reader, writer, &vread, h);

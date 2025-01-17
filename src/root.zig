@@ -5,9 +5,9 @@
 //! - Unpack data in memory: `Unpack`
 //! - Emit messagepack values into memory:
 //!   - `Nil`, `Bool`, `Int`, `Float`
-//!   - `prefixString`, `prefixBinary`, `prefixExt`
-//!   - `prefixArray`, `prefixMap`
-//! - `std.io` helpers: `io`
+//!   - `AnyStr`, `AnyBin`, `AnyExt`
+//!   - `AnyArray`, `AnyMap`
+//! - Unpack data from I/O: `UnpackReader`
 //!
 //! ### Emit variable-sized messagepack values
 //!
@@ -29,15 +29,12 @@
 //! const content = "Hello World";
 //!
 //! var buf: [content.len + zigpak.PREFIX_BUFSIZE]u8 = undefined;
-//! const prefix = zigpak.prefixString(@intCast(content.len));
+//! const prefix = zigpak.AnyStr.prefix(@intCast(content.len));
 //! std.mem.copyForward(u8, &buf, prefix.constSlice());
 //! std.mem.copyForward(u8, buf[prefix.len..], content);
 //!
 //! const result = buf[0..prefix.len + content.len]; // the constructed value
 //! ```
-//!
-//! > You can also directly write the prefix and the content into
-//! > an external pipe, see `io`.
 //!
 //! Writing array or map is similar. The elements of any of them are
 //! layout linearly on the element level. Let's say we put into array with a nil,
@@ -59,18 +56,18 @@
 //!
 //! var buf: std.BoundedArray(u8, zigpak.PREFIX_BUFSIZE * 4 + 1 + strContent.length) = .{};
 //!
-//! buf.appendSliceAssumeCapacity(prefixArray(3).constSlice());
+//! AnyArray.pipe(buf.writer(), 3) catch unreachable;
 //!
 //! { // The first element: nil
-//!     buf.len += Nil.write(buf.unusedCapacitySlice());
+//!     Nil.pipe(buf.writer()) catch unreachable;
 //! }
 //!
 //! { // The second element: int 1
-//!     buf.len += SInt.writeSm(i8, buf.unusedCapacitySlice(), 1);
+//!     Int(i8).pipe(buf.writer(), 1) catch unreachable;
 //! }
 //!
 //! { // The third element: a string
-//!     buf.appendSliceAssumeCapacity(prefixString(@intCast(strContent.length)).constSlice());
+//!     AnyStr.pipe(buf.writer(), @intCast(strContent.len)) catch unreachable;
 //!     buf.appendSliceAssumeCapacity(strContent);
 //! }
 //!
@@ -91,17 +88,17 @@
 //! ```
 //!
 
-pub const io = @import("./io.zig");
 pub const LookupTableOptimize = @import("./budopts.zig").LookupTableOptimize;
 pub const Unpack = @import("./Unpack.zig");
+pub const UnpackReader = @import("./io/UnpackReader.zig");
 
 /// The lookup table optimization level.
 /// Use `-Dlookup-table=<target>` in the build system to change this level.
 pub const lookupTableMode: LookupTableOptimize = @enumFromInt(@intFromEnum(@import("budopts").lookupTable));
 
 test {
-    _ = io;
     _ = Unpack;
+    _ = UnpackReader;
 }
 
 const std = @import("std");
