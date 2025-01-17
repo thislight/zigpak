@@ -16,51 +16,6 @@ const comptimePrint = std.fmt.comptimePrint;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
-pub fn writeStringPrefix(writer: anytype, length: u32) !usize {
-    const header = fmt.prefixString(length);
-    return try writer.write(header.constSlice());
-}
-
-pub fn writeString(writer: anytype, src: []const u8) !usize {
-    const size1 = try writeStringPrefix(writer, @intCast(src.len));
-    const size2 = try writer.write(src);
-    return size1 + size2;
-}
-
-pub fn writeBinaryPrefix(writer: anytype, length: u32) !usize {
-    const header = fmt.prefixBinary(length);
-    return try writer.write(header.constSlice());
-}
-
-pub fn writeBinary(writer: anytype, src: []const u8) !usize {
-    const size1 = try writeBinaryPrefix(writer, @intCast(src.len));
-    const size2 = try writer.write(src);
-    return size1 + size2;
-}
-
-pub fn writeExtPrefix(writer: anytype, length: u32, extype: i8) !usize {
-    const header = fmt.prefixExt(length, extype);
-    return try writer.write(header.constSlice());
-}
-
-pub fn writeExt(writer: anytype, extype: i8, payload: []const u8) !usize {
-    const size1 = try writeExtPrefix(writer, @intCast(payload.len), extype);
-    const size2 = try writer.write(payload);
-    return size1 + size2;
-}
-
-pub fn writeArrayPrefix(writer: anytype, length: u32) !usize {
-    const prefix = fmt.prefixArray(length);
-    const slice = prefix.constSlice();
-    return try writer.write(slice);
-}
-
-pub fn writeMapPrefix(writer: anytype, length: u32) !usize {
-    const prefix = fmt.prefixMap(length);
-    const slice = prefix.constSlice();
-    return try writer.write(slice);
-}
-
 /// Wrapper to read value from a `std.io.GenericReader`.
 ///
 /// The usage is almost same to the `fmt.Unpack`, but you
@@ -266,7 +221,7 @@ pub const UnpackReader = struct {
         const t = std.testing;
 
         var content: std.BoundedArray(u8, fmt.PREFIX_BUFSIZE * 1 + "Hello".len) = .{};
-        _ = try writeString(content.writer(), "Hello");
+        _ = try fmt.AnyStr.pipeVal(content.writer(), "Hello");
         var stream = std.io.fixedBufferStream(content.constSlice());
 
         var buf: [256]u8 = undefined;
@@ -281,7 +236,7 @@ pub const UnpackReader = struct {
         const t = std.testing;
 
         var content: std.BoundedArray(u8, fmt.PREFIX_BUFSIZE * 1 + "Hello".len) = .{};
-        _ = try writeString(content.writer(), "Hello");
+        _ = try fmt.AnyStr.pipeVal(content.writer(), "Hello");
         var stream = std.io.fixedBufferStream(content.constSlice()[0 .. content.len - 1]);
 
         var buf: [256]u8 = undefined;

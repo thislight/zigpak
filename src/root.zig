@@ -149,7 +149,7 @@ pub fn Int(T: type) type {
         }
 
         pub fn countSm(value: T) usize {
-            return serializeSm(std.io.null_writer, value) catch unreachable;
+            return pipeSm(std.io.null_writer, value) catch unreachable;
         }
 
         fn headerOf(value: T) u8 {
@@ -170,7 +170,7 @@ pub fn Int(T: type) type {
             };
         }
 
-        pub fn serialize(writer: anytype, value: T) !usize {
+        pub fn pipe(writer: anytype, value: T) !usize {
             _ = try writer.writeByte(headerOf(value));
 
             if (nbytes == 0) {
@@ -191,34 +191,34 @@ pub fn Int(T: type) type {
         /// If you need to use the smallest type depends on the `value`, see `writeIntSm`.
         pub fn write(dst: []u8, value: T) usize {
             var stream = std.io.fixedBufferStream(dst);
-            return serialize(stream.writer(), value) catch unreachable;
+            return @call(.always_inline, pipe, .{ stream.writer(), value }) catch unreachable;
         }
 
         /// Write integer into `writer` uses smallest msgpack type.
-        pub fn serializeSm(writer: anytype, value: T) !usize {
+        pub fn pipeSm(writer: anytype, value: T) !usize {
             if (value >= 0) {
                 if (value >= 0 and value <= 0b01111111) {
-                    return try Int(u7).serialize(writer, @intCast(value));
+                    return try Int(u7).pipe(writer, @intCast(value));
                 } else if (value <= maxInt(u8)) {
-                    return try Int(u8).serialize(writer, @intCast(value));
+                    return try Int(u8).pipe(writer, @intCast(value));
                 } else if (value <= maxInt(u16)) {
-                    return try Int(u16).serialize(writer, @intCast(value));
+                    return try Int(u16).pipe(writer, @intCast(value));
                 } else if (value <= maxInt(u32)) {
-                    return try Int(u32).serialize(writer, @intCast(value));
+                    return try Int(u32).pipe(writer, @intCast(value));
                 } else if (value <= maxInt(u64)) {
-                    return try Int(u64).serialize(writer, @intCast(value));
+                    return try Int(u64).pipe(writer, @intCast(value));
                 }
             } else if (signed) {
                 if (value >= -0b00011111) {
-                    return try Int(i6).serialize(writer, @intCast(value));
+                    return try Int(i6).pipe(writer, @intCast(value));
                 } else if (value >= minInt(i8)) {
-                    return try Int(i8).serialize(writer, @intCast(value));
+                    return try Int(i8).pipe(writer, @intCast(value));
                 } else if (value >= minInt(i16)) {
-                    return try Int(i16).serialize(writer, @intCast(value));
+                    return try Int(i16).pipe(writer, @intCast(value));
                 } else if (value >= minInt(i32)) {
-                    return try Int(i32).serialize(writer, @intCast(value));
+                    return try Int(i32).pipe(writer, @intCast(value));
                 } else if (value >= minInt(i64)) {
-                    return try Int(i64).serialize(writer, @intCast(value));
+                    return try Int(i64).pipe(writer, @intCast(value));
                 }
             }
             unreachable;
@@ -226,7 +226,8 @@ pub fn Int(T: type) type {
 
         pub fn writeSm(dst: []u8, value: T) usize {
             var stream = std.io.fixedBufferStream(dst);
-            return serializeSm(stream.writer(), value) catch unreachable;
+            // TODO: enforce always_inline
+            return @call(.always_inline, pipeSm, .{ stream.writer(), value }) catch unreachable;
         }
     };
 }
@@ -253,7 +254,7 @@ pub fn Float(T: type) type {
             return 1 + nbytes;
         }
 
-        pub fn serialize(writer: anytype, value: T) !usize {
+        pub fn pipe(writer: anytype, value: T) !usize {
             _ = try writer.writeByte(switch (nbytes) {
                 4 => 0xca,
                 8 => 0xcb,
@@ -271,26 +272,26 @@ pub fn Float(T: type) type {
 
         pub fn write(dst: []u8, value: T) usize {
             var stream = std.io.fixedBufferStream(dst);
-            return serialize(stream.writer(), value) catch unreachable;
+            return pipe(stream.writer(), value) catch unreachable;
         }
 
         pub fn countSm(value: T) usize {
-            return serializeSm(std.io.null_writer, value) catch unreachable;
+            return pipeSm(std.io.null_writer, value) catch unreachable;
         }
 
-        pub fn serializeSm(writer: anytype, value: T) !usize {
+        pub fn pipeSm(writer: anytype, value: T) !usize {
             const wontLosePrecision = @as(f32, @floatCast(value)) == value;
 
             if (wontLosePrecision) {
-                return try Float(f32).serialize(writer, @floatCast(value));
+                return try Float(f32).pipe(writer, @floatCast(value));
             } else {
-                return try Float(f64).serialize(writer, @floatCast(value));
+                return try Float(f64).pipe(writer, @floatCast(value));
             }
         }
 
         pub fn writeSm(dst: []u8, value: T) usize {
             var stream = std.io.fixedBufferStream(dst);
-            return serializeSm(stream.writer(), value) catch unreachable;
+            return pipeSm(stream.writer(), value) catch unreachable;
         }
     };
 }
@@ -303,7 +304,7 @@ pub const Nil = struct {
         return 1;
     }
 
-    pub fn serialize(writer: anytype) !usize {
+    pub fn pipe(writer: anytype) !usize {
         _ = try writer.writeByte(0xc0);
         return 1;
     }
@@ -320,17 +321,14 @@ pub const Nil = struct {
         try t.expectEqual(@as(usize, 1), size);
         try t.expectEqual(@as(u8, 0xc0), buf[0]);
     }
-
-    pub const countSm = count;
-    pub const serializeSm = serialize;
-    pub const writeSm = write;
 };
 
 pub const Bool = struct {
     pub fn count(_: bool) usize {
         return 1;
     }
-    pub fn serialize(writer: anytype, value: bool) !usize {
+
+    pub fn pipe(writer: anytype, value: bool) !usize {
         _ = try writer.writeByte(switch (value) {
             true => 0xc3,
             false => 0xc2,
@@ -340,12 +338,8 @@ pub const Bool = struct {
 
     pub fn write(dst: []u8, value: bool) usize {
         var stream = std.io.fixedBufferStream(dst);
-        return serialize(stream.writer(), value) catch unreachable;
+        return pipe(stream.writer(), value) catch unreachable;
     }
-
-    pub const countSm = count;
-    pub const serializeSm = serialize;
-    pub const writeSm = write;
 };
 
 /// Use this constant to decide the `Prefix` buffer size in comptime.
@@ -366,120 +360,220 @@ pub const PREFIX_BUFSIZE = 6;
 /// This is the header to be stored before the actual content.
 pub const Prefix = std.BoundedArray(u8, PREFIX_BUFSIZE);
 
-/// Generate a string prefix.
-pub fn prefixString(len: u32) Prefix {
-    var result: Prefix = .{};
-    switch (len) {
-        0...0b00011111 => {
-            result.appendAssumeCapacity(0b10100000 | (0b00011111 & @as(u8, @intCast(len))));
-        },
-        0b00011111 + 1...maxInt(u8) => {
-            result.appendSliceAssumeCapacity(&.{
-                0xd9,
-                @truncate(len),
-            });
-        },
-        maxInt(u8) + 1...maxInt(u16) => {
-            result.appendAssumeCapacity(0xda);
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
-        },
-        maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(0xdb);
-            result.writer().writeInt(u32, len, .big) catch unreachable;
-        },
+pub const AnyStr = struct {
+    pub fn prefix(len: u32) Prefix {
+        var result: Prefix = .{};
+        switch (len) {
+            0...0b00011111 => {
+                result.appendAssumeCapacity(0b10100000 | (0b00011111 & @as(u8, @intCast(len))));
+            },
+            0b00011111 + 1...maxInt(u8) => {
+                result.appendSliceAssumeCapacity(&.{
+                    0xd9,
+                    @truncate(len),
+                });
+            },
+            maxInt(u8) + 1...maxInt(u16) => {
+                result.appendAssumeCapacity(0xda);
+                result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            },
+            maxInt(u16) + 1...maxInt(u32) => {
+                result.appendAssumeCapacity(0xdb);
+                result.writer().writeInt(u32, len, .big) catch unreachable;
+            },
+        }
+        return result;
     }
-    return result;
-}
 
-/// Generate a binary prefix.
-pub fn prefixBinary(len: u32) Prefix {
-    var result: Prefix = .{};
-    switch (len) {
-        0...maxInt(u8) => {
-            result.appendSliceAssumeCapacity(&.{
-                @intFromEnum(ContainerType.bin8),
-                @as(u8, @truncate(len)),
-            });
-        },
-        maxInt(u8) + 1...maxInt(u16) => {
-            result.appendAssumeCapacity(@intFromEnum(ContainerType.bin16));
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
-        },
-        maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(@intFromEnum(ContainerType.bin32));
-            result.writer().writeInt(u32, len, .big) catch unreachable;
-        },
+    pub fn count(len: u32) usize {
+        return @call(.always_inline, prefix, .{len}).len;
     }
-    return result;
-}
 
-/// Generate a array prefix for `len`.
-pub fn prefixArray(len: u32) Prefix {
-    var result: Prefix = .{};
-    switch (len) {
-        0...0b00001111 => {
-            result.appendAssumeCapacity(0b10010000 | (0b00001111 & @as(u8, @truncate(len))));
-        },
-        (0b00001111 + 1)...maxInt(u16) => {
-            result.appendAssumeCapacity(0xdc);
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
-        },
-        maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(0xdd);
-            result.writer().writeInt(u32, len, .big) catch unreachable;
-        },
+    pub fn write(dst: []u8, len: u32) usize {
+        const p = prefix(len);
+        @memcpy(dst, p.constSlice());
+        return p.len;
     }
-    return result;
-}
 
-/// Generate a map prefix.
-///
-/// The `len` here is the number of the k-v pairs.
-/// The elements of the map must be placed as
-/// KEY VALUE KEY VALUE ... so on.
-pub fn prefixMap(len: u32) Prefix {
-    var result: Prefix = .{};
-    switch (len) {
-        0...0b00001111 => {
-            result.appendAssumeCapacity(0b10000000 | (0b00001111 & @as(u8, @truncate(len))));
-        },
-        (0b00001111 + 1)...maxInt(u16) => {
-            result.appendAssumeCapacity(0xde);
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
-        },
-        maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(0xdf);
-            result.writer().writeInt(u32, len, .big) catch unreachable;
-        },
+    pub fn pipe(writer: anytype, len: u32) !usize {
+        const p = prefix(len);
+        return try writer.write(p.constSlice());
     }
-    return result;
-}
 
-/// Generate a ext prefix.
-pub fn prefixExt(len: u32, extype: i8) Prefix {
-    var result: Prefix = .{};
-    switch (len) {
-        1, 2, 4, 8, 16 => |b| {
-            result.appendAssumeCapacity(0xd4 + log2(b));
-            result.writer().writeInt(i8, extype, .big) catch unreachable;
-        },
-        0...maxInt(u8) => {
-            result.appendSliceAssumeCapacity(&.{ 0xc7, @truncate(len) });
-            result.writer().writeInt(i8, extype, .big) catch unreachable;
-        },
-        maxInt(u8) + 1...maxInt(u16) => {
-            result.appendAssumeCapacity(0xc8);
-            result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
-            result.writer().writeInt(i8, extype, .big) catch unreachable;
-        },
-        maxInt(u16) + 1...maxInt(u32) => {
-            result.appendAssumeCapacity(0xc9);
-            result.writer().writeInt(u32, @truncate(len), .big) catch unreachable;
-            result.writer().writeInt(i8, extype, .big) catch unreachable;
-        },
+    pub fn pipeVal(writer: anytype, value: []const u8) !usize {
+        const sz0 = try pipe(writer, @intCast(value.len));
+        const sz1 = try writer.write(value);
+        return sz0 + sz1;
     }
-    return result;
-}
+};
+
+pub const AnyBin = struct {
+    pub fn prefix(len: u32) Prefix {
+        var result: Prefix = .{};
+        switch (len) {
+            0...maxInt(u8) => {
+                result.appendSliceAssumeCapacity(&.{
+                    @intFromEnum(ContainerType.bin8),
+                    @as(u8, @truncate(len)),
+                });
+            },
+            maxInt(u8) + 1...maxInt(u16) => {
+                result.appendAssumeCapacity(@intFromEnum(ContainerType.bin16));
+                result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            },
+            maxInt(u16) + 1...maxInt(u32) => {
+                result.appendAssumeCapacity(@intFromEnum(ContainerType.bin32));
+                result.writer().writeInt(u32, len, .big) catch unreachable;
+            },
+        }
+        return result;
+    }
+
+    pub fn count(len: u32) usize {
+        return @call(.always_inline, prefix, .{len}).len;
+    }
+
+    pub fn write(dst: []u8, len: u32) usize {
+        const p = prefix(len);
+        @memcpy(dst, p.constSlice());
+        return p.len;
+    }
+
+    pub fn pipe(writer: anytype, len: u32) !usize {
+        const p = prefix(len);
+        return try writer.write(p.constSlice());
+    }
+
+    pub fn pipeVal(writer: anytype, value: []const u8) !usize {
+        const sz0 = try pipe(writer, @intCast(value.len));
+        const sz1 = try writer.write(value);
+        return sz0 + sz1;
+    }
+};
+
+pub const AnyArray = struct {
+    pub fn prefix(len: u32) Prefix {
+        var result: Prefix = .{};
+        switch (len) {
+            0...0b00001111 => {
+                result.appendAssumeCapacity(0b10010000 | (0b00001111 & @as(u8, @truncate(len))));
+            },
+            (0b00001111 + 1)...maxInt(u16) => {
+                result.appendAssumeCapacity(0xdc);
+                result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            },
+            maxInt(u16) + 1...maxInt(u32) => {
+                result.appendAssumeCapacity(0xdd);
+                result.writer().writeInt(u32, len, .big) catch unreachable;
+            },
+        }
+        return result;
+    }
+
+    pub fn count(len: u32) usize {
+        return @call(.always_inline, prefix, .{len}).len;
+    }
+
+    pub fn write(dst: []u8, len: u32) usize {
+        const p = prefix(len);
+        @memcpy(dst, p.constSlice());
+        return p.len;
+    }
+
+    pub fn pipe(writer: anytype, len: u32) !usize {
+        const p = prefix(len);
+        return try writer.write(p.constSlice());
+    }
+};
+
+pub const AnyMap = struct {
+    /// Generate a map prefix.
+    ///
+    /// The `len` here is the number of the k-v pairs.
+    /// The elements of the map must be placed as
+    /// KEY VALUE KEY VALUE ... so on.
+    pub fn prefix(len: u32) Prefix {
+        var result: Prefix = .{};
+        switch (len) {
+            0...0b00001111 => {
+                result.appendAssumeCapacity(0b10000000 | (0b00001111 & @as(u8, @truncate(len))));
+            },
+            (0b00001111 + 1)...maxInt(u16) => {
+                result.appendAssumeCapacity(0xde);
+                result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+            },
+            maxInt(u16) + 1...maxInt(u32) => {
+                result.appendAssumeCapacity(0xdf);
+                result.writer().writeInt(u32, len, .big) catch unreachable;
+            },
+        }
+        return result;
+    }
+
+    pub fn count(len: u32) usize {
+        return @call(.always_inline, prefix, .{len}).len;
+    }
+
+    pub fn write(dst: []u8, len: u32) usize {
+        const p = prefix(len);
+        @memcpy(dst, p.constSlice());
+        return p.len;
+    }
+
+    pub fn pipe(writer: anytype, len: u32) !usize {
+        const p = prefix(len);
+        return try writer.write(p.constSlice());
+    }
+};
+
+pub const AnyExt = struct {
+    /// Generate a ext prefix.
+    pub fn prefix(len: u32, extype: i8) Prefix {
+        var result: Prefix = .{};
+        switch (len) {
+            1, 2, 4, 8, 16 => |b| {
+                result.appendAssumeCapacity(0xd4 + log2(b));
+                result.writer().writeInt(i8, extype, .big) catch unreachable;
+            },
+            0...maxInt(u8) => {
+                result.appendSliceAssumeCapacity(&.{ 0xc7, @truncate(len) });
+                result.writer().writeInt(i8, extype, .big) catch unreachable;
+            },
+            maxInt(u8) + 1...maxInt(u16) => {
+                result.appendAssumeCapacity(0xc8);
+                result.writer().writeInt(u16, @truncate(len), .big) catch unreachable;
+                result.writer().writeInt(i8, extype, .big) catch unreachable;
+            },
+            maxInt(u16) + 1...maxInt(u32) => {
+                result.appendAssumeCapacity(0xc9);
+                result.writer().writeInt(u32, @truncate(len), .big) catch unreachable;
+                result.writer().writeInt(i8, extype, .big) catch unreachable;
+            },
+        }
+        return result;
+    }
+
+    pub fn count(len: u32, extype: i8) usize {
+        return @call(.always_inline, prefix, .{ len, extype }).len;
+    }
+
+    pub fn write(dst: []u8, len: u32, extype: i8) usize {
+        const p = prefix(len, extype);
+        @memcpy(dst, p.constSlice());
+        return p.len;
+    }
+
+    pub fn pipe(writer: anytype, len: u32, extype: i8) !usize {
+        const p = prefix(len, extype);
+        return try writer.write(p.constSlice());
+    }
+
+    pub fn pipeVal(writer: anytype, extype: i8, value: []const u8) !usize {
+        const sz0 = try pipe(writer, @intCast(value.len), extype);
+        const sz1 = try writer.write(value);
+        return sz0 + sz1;
+    }
+};
 
 /// The value container type.
 ///

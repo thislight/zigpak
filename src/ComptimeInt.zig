@@ -16,9 +16,7 @@ pub fn count(value: comptime_int) usize {
     return 1 + nbytes;
 }
 
-pub const countSm = count;
-
-pub fn serialize(writer: anytype, value: comptime_int) !usize {
+pub fn pipe(writer: anytype, value: comptime_int) !usize {
     const signed: std.builtin.Signedness = if (value < 0) .signed else .unsigned;
     const bits = compatstd.meta.bitsOfNumber(value);
 
@@ -56,7 +54,5 @@ pub fn serialize(writer: anytype, value: comptime_int) !usize {
 
 pub fn write(dst: []u8, value: comptime_int) usize {
     var stream = std.io.fixedBufferStream(dst);
-    return serialize(stream.writer(), value) catch unreachable;
+    return pipe(stream.writer(), value) catch unreachable;
 }
-
-pub const writeSm = write;
