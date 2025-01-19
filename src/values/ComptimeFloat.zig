@@ -1,5 +1,5 @@
 const std = @import("std");
-const Float = @import("./root.zig").Float;
+const Float = @import("../root.zig").Float;
 
 pub fn count(value: comptime_int) usize {
     return pipe(std.io.null_writer, value) catch unreachable;
