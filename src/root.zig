@@ -30,8 +30,8 @@
 //!
 //! var buf: [content.len + zigpak.PREFIX_BUFSIZE]u8 = undefined;
 //! const prefix = zigpak.AnyStr.prefix(@intCast(content.len));
-//! std.mem.copyForward(u8, &buf, prefix.constSlice());
-//! std.mem.copyForward(u8, buf[prefix.len..], content);
+//! @memcpy(u8, &buf, prefix.constSlice());
+//! @memcpy(u8, buf[prefix.len..], content);
 //!
 //! const result = buf[0..prefix.len + content.len]; // the constructed value
 //! ```
@@ -59,15 +59,15 @@
 //! AnyArray.pipe(buf.writer(), 3) catch unreachable;
 //!
 //! { // The first element: nil
-//!     Nil.pipe(buf.writer()) catch unreachable;
+//!     _ = Nil.pipe(buf.writer()) catch unreachable;
 //! }
 //!
 //! { // The second element: int 1
-//!     Int(i8).pipe(buf.writer(), 1) catch unreachable;
+//!     _ = Int(i8).pipe(buf.writer(), 1) catch unreachable;
 //! }
 //!
 //! { // The third element: a string
-//!     AnyStr.pipe(buf.writer(), @intCast(strContent.len)) catch unreachable;
+//!     _ = AnyStr.pipe(buf.writer(), @intCast(strContent.len)) catch unreachable;
 //!     buf.appendSliceAssumeCapacity(strContent);
 //! }
 //!
