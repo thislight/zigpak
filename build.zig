@@ -145,6 +145,8 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
 
+        tests.root_module.addOptions("budopts", bopts);
+
         if (kcov) |args| {
             const run = b.addSystemCommand(&.{"kcov"});
             const includeArg = std.fmt.allocPrint(

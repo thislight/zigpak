@@ -152,6 +152,10 @@ pub const AnyArray = @import("./values/AnyArray.zig");
 pub const AnyMap = @import("./values/AnyMap.zig");
 pub const AnyExt = @import("./values/AnyExt.zig");
 
+test {
+    _ = @import("./values/numbers.zig");
+}
+
 /// The value container type.
 ///
 /// Every represented value is stored in a container.

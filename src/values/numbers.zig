@@ -133,12 +133,12 @@ test Int {
     const t = std.testing;
     { // Emit i32 as-is
         var dst: std.BoundedArray(u8, 8) = .{};
-        Int(i32).pipe(dst.writer(), 15);
-        try t.expectEqual(15, std.mem.readInt(dst.buffer[1..5], .big));
+        _ = try Int(i32).pipe(dst.writer(), 15);
+        try t.expectEqual(15, std.mem.readInt(i32, dst.buffer[1..5], .big));
     }
     { // Emit i32 as the smallest type
         var dst: std.BoundedArray(u8, 8) = .{};
-        Int(i32).pipeSm(dst.writer(), 15);
+        _ = try Int(i32).pipeSm(dst.writer(), 15);
         try t.expectEqual(1, dst.len);
     }
 }
@@ -208,4 +208,19 @@ pub fn Float(T: type) type {
             return @call(.always_inline, pipeSm, .{ stream.writer(), value }) catch unreachable;
         }
     };
+}
+
+test Float {
+    const t = std.testing;
+
+    { // Write f32 as-is
+        var dst: std.BoundedArray(u8, 8) = .{};
+        _ = try Float(f32).pipe(dst.writer(), 1);
+        try t.expectEqual(1, readFloatBig(f32, dst.buffer[1..5]));
+    }
+    { // Write f64 as the smallest type
+        var dst: std.BoundedArray(u8, 8) = .{};
+        _ = try Float(f64).pipeSm(dst.writer(), 1);
+        try t.expectEqual(5, dst.len);
+    }
 }
