@@ -134,7 +134,7 @@ pub const UInt = Int(u64);
 pub const Float = @import("./values/numbers.zig").Float;
 
 /// Biggest float number type.
-pub const AnyFloat = Float(f64);
+pub const Double = Float(f64);
 
 pub const Nil = @import("./values/Nil.zig");
 pub const Bool = @import("./values/Bool.zig");
