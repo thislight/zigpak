@@ -35,5 +35,7 @@ jobs:
           bun-version-file: package.json
       - name: Install Test Dependencies
         run: bun i
-      - name: Run Compatibility Test
+      - name: Run Compatibility Tests
         run: zig build test-compat -Doptimize=${{ matrix.optimize }} -Dlookup-table=${{ matrix.lookupTable }}
+      - name: Run Unit Tests
+        run: zig build test -Doptimize=${{ matrix.optimize }} -Dlookup-table=${{ matrix.lookupTable }}
